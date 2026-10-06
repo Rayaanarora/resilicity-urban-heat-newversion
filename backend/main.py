@@ -39,8 +39,11 @@ from image_generation import (
     GeminiImageEditingProvider,
     build_redesign_prompt,
     build_refinement_prompt,
+    parse_refinement_intent,
     validate_image_output,
     UnifiedRedesignResponse,
+    RefinementIntent,
+    RefinementResponse,
     SceneAnalysis,
     SpatialDesignPlan,
     VisualizationOutput,
@@ -60,6 +63,7 @@ gemini_provider = GeminiImageEditingProvider()
 
 # In-memory deterministic generation cache: key -> VisualizationOutput
 GENERATION_CACHE: Dict[str, Dict[str, Any]] = {}
+REDESIGN_CACHE: Dict[str, Dict[str, Any]] = GENERATION_CACHE
 
 bundle = joblib.load(HERE / "heat_model.joblib")
 model, FRAC = bundle["model"], bundle["features"]
@@ -335,20 +339,47 @@ async def analyze_and_redesign(
 @app.post("/api/v1/refine-design")
 async def refine_design(
     image: UploadFile = File(...),
-    refinement_prompt: str = Form(...),
+    instruction: Optional[str] = Form(None),
+    refinement_prompt: Optional[str] = Form(None),
     quality_tier: str = Form("fast"),
+    context: Optional[str] = Form(None),
+    refinement_history: Optional[str] = Form(None),
 ):
-    """Refine a previously generated redesign with natural language guidance."""
+    """Refine a previously generated redesign with open-ended natural language guidance.
+    
+    Transforms the current generated design according to the user's arbitrary instruction,
+    interprets structured intent, and executes Gemini multimodal image editing while
+    strictly preserving architectural identity and camera perspective.
+    """
     t0 = time.time()
+    instr_text = (instruction or refinement_prompt or "").strip()
+    if not instr_text:
+        raise HTTPException(400, "Refinement instruction cannot be empty.")
+
     try:
         content = await image.read()
         pil_img = Image.open(io.BytesIO(content)).convert("RGB")
     except Exception as e:
         raise HTTPException(400, f"Invalid image: {e}")
 
-    prompt = build_refinement_prompt("", refinement_prompt)
     model_name = gemini_provider.get_model_for_tier(quality_tier)
 
+    # 1. Deterministic cache check
+    img_hash = hashlib.sha256(content).hexdigest()[:16]
+    instr_hash = hashlib.sha256(instr_text.lower().encode("utf-8")).hexdigest()[:16]
+    refine_cache_key = f"refine_{img_hash}_{instr_hash}_{model_name}"
+
+    if refine_cache_key in REDESIGN_CACHE:
+        cached = REDESIGN_CACHE[refine_cache_key]
+        return cached
+
+    # 2. Extract structured design intent (goal, additions, removals, modifications, preservations)
+    intent = parse_refinement_intent(instr_text, context=context)
+
+    # 3. Build spatially constrained refinement prompt
+    prompt = build_refinement_prompt(instr_text, intent=intent, context=context)
+
+    # 4. Execute multimodal image editing with Gemini
     edited_img, gen_error = await gemini_provider.edit(
         pil_img,
         prompt=prompt,
@@ -357,21 +388,41 @@ async def refine_design(
     )
 
     elapsed_ms = int((time.time() - t0) * 1000)
+    intent_dict = intent.dict() if hasattr(intent, "dict") else intent.model_dump()
+
     if edited_img is not None:
         _, report, norm_img = validate_image_output(edited_img, pil_img.size)
         data_url = encode_image_to_base64(norm_img, quality=92)
-        return {
+        response_data = {
             "status": "ready",
             "image_url": data_url,
             "width": norm_img.width,
             "height": norm_img.height,
+            "instruction": instr_text,
             "provider": "gemini",
             "model": model_name,
+            "quality_tier": quality_tier,
             "generation_time_ms": elapsed_ms,
-            "refinement_prompt": refinement_prompt,
+            "intent": intent_dict,
+            "error_message": None,
         }
+        REDESIGN_CACHE[refine_cache_key] = response_data
+        return response_data
     else:
-        raise HTTPException(502, f"Refinement failed: {gen_error}")
+        # Graceful return with unavailable status so the frontend retains the current valid image
+        return {
+            "status": "unavailable",
+            "image_url": None,
+            "width": pil_img.width,
+            "height": pil_img.height,
+            "instruction": instr_text,
+            "provider": "gemini",
+            "model": model_name,
+            "quality_tier": quality_tier,
+            "generation_time_ms": elapsed_ms,
+            "intent": intent_dict,
+            "error_message": gen_error or "Refinement generation unavailable.",
+        }
 
 
 # ---------------------------------------------------------------------------

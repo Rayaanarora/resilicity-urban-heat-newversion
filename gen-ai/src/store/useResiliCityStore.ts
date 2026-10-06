@@ -14,6 +14,7 @@ import type {
   DesignProfile,
   HeatScoreMetrics,
   Intervention,
+  RefinementRevision,
   SceneAnalysis,
   SpatialDesignPlan,
   SurfaceMask,
@@ -57,6 +58,15 @@ interface ResiliCityStoreState {
   visualizationOutput: VisualizationOutput | null;
   generationStage: string | null;
   refinementHistory: Array<{ prompt: string; imageUrl: string; timestamp: number }>;
+
+  // Open-ended Refinement Revision History
+  revisions: RefinementRevision[];
+  currentRevisionIndex: number;
+  refinementIntent: any | null;
+  undoRefinement: () => void;
+  restoreRevision: (index: number) => void;
+  resetToGeneratedDesign: () => void;
+  resetToOriginal: () => void;
 
   // Interventions
   interventions: Intervention[];
@@ -106,6 +116,14 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
     'tropical'
   );
 
+  const initialRevision: RefinementRevision = {
+    revision: 0,
+    instruction: 'Initial resilient redesign',
+    imageUrl: initialScene.afterImageUrl,
+    timestamp: Date.now(),
+    model: 'gemini-3.1-flash-image',
+  };
+
   return {
     activeTab: 'analysis',
     setActiveTab: (tab: NavTab) => set({ activeTab: tab }),
@@ -138,6 +156,10 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
     visualizationOutput: null,
     generationStage: null,
     refinementHistory: [],
+
+    revisions: [initialRevision],
+    currentRevisionIndex: 0,
+    refinementIntent: null,
 
     interventions: initialScene.interventions,
     activeInterventionIds: initialDefaultActiveIds,
@@ -174,6 +196,14 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
         get().climateZone
       );
 
+      const rev0: RefinementRevision = {
+        revision: 0,
+        instruction: 'Initial resilient redesign',
+        imageUrl: scene.afterImageUrl,
+        timestamp: Date.now(),
+        model: 'gemini-3.1-flash-image',
+      };
+
       set({
         currentSceneId: scene.id,
         currentFile: null,
@@ -196,6 +226,9 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
         visualizationOutput: null,
         generationStage: null,
         refinementHistory: [],
+        revisions: [rev0],
+        currentRevisionIndex: 0,
+        refinementIntent: null,
         imageDimensions: { width: 1024, height: 683 },
         activeTab: 'analysis',
       });
@@ -311,6 +344,9 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
           planSummary: `Site analysis mapped ${realMasks.length} urban surface categories. Ready for generative redesign.`,
           imageDimensions: segResult.image,
           generationStage: null,
+          revisions: [],
+          currentRevisionIndex: -1,
+          refinementIntent: null,
           apiError: null,
           activeTab: 'analysis',
         });
@@ -416,9 +452,19 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
           const newUrl = result.visualization.image_url;
           const cacheKey = `${fileToSend.name}_${designProfile}_${selectedTier}_${requestedTypes.sort().join('_')}`;
 
+          const rev0: RefinementRevision = {
+            revision: 0,
+            instruction: 'Initial resilient redesign',
+            imageUrl: newUrl,
+            timestamp: Date.now(),
+            model: selectedTier === 'final' ? 'gemini-3-pro-image' : 'gemini-3.1-flash-image',
+          };
+
           set((state) => ({
             generatedImageUrl: newUrl,
             visualizationOutput: result.visualization,
+            revisions: [rev0],
+            currentRevisionIndex: 0,
             generationCache: {
               ...state.generationCache,
               [cacheKey]: newUrl,
@@ -464,23 +510,63 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
     },
 
     refineCurrentDesign: async (instruction: string) => {
-      const { generatedImageUrl, rawImageUrl, qualityTier, refinementHistory } = get();
-      const targetUrl = generatedImageUrl || rawImageUrl;
+      const {
+        revisions,
+        currentRevisionIndex,
+        generatedImageUrl,
+        rawImageUrl,
+        qualityTier,
+        refinementHistory,
+      } = get();
+
+      // Use the image from the currently active revision as input to the next edit
+      const currentRev = revisions[currentRevisionIndex];
+      const targetUrl = currentRev?.imageUrl || generatedImageUrl || rawImageUrl;
+
       if (!targetUrl) {
         set({ apiError: 'No generated design available to refine.' });
         return;
       }
 
-      set({ isRefining: true, apiError: null, generationStage: 'Refining image' });
+      set({
+        isRefining: true,
+        apiError: null,
+        generationStage: 'Interpreting your design request',
+      });
+
+      // Realistic staged UI transitions driven by the request lifecycle
+      const t1 = setTimeout(() => {
+        if (get().isRefining) set({ generationStage: 'Applying changes' });
+      }, 700);
+
+      const t2 = setTimeout(() => {
+        if (get().isRefining) set({ generationStage: 'Refining visual details' });
+      }, 2200);
 
       try {
         const resp = await fetch(targetUrl);
         const blob = await resp.blob();
 
         const result = await fetchRefineDesign(blob, instruction, qualityTier);
+        clearTimeout(t1);
+        clearTimeout(t2);
+
+        set({ generationStage: 'Validating redesign' });
+        await new Promise((r) => setTimeout(r, 200));
 
         if (result.status === 'ready' && result.image_url) {
           const nextUrl = result.image_url;
+
+          // Branch revision history: truncate any forward undos
+          const validHistory = revisions.slice(0, currentRevisionIndex + 1);
+          const nextRev: RefinementRevision = {
+            revision: validHistory.length,
+            instruction,
+            imageUrl: nextUrl,
+            timestamp: Date.now(),
+            model: result.model || 'gemini-3.1-flash-image',
+          };
+
           const nextViz: VisualizationOutput = {
             status: 'ready',
             image_url: nextUrl,
@@ -489,12 +575,16 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
             provider: result.provider || 'gemini',
             model: result.model || 'gemini-3.1-flash-image',
             quality_tier: qualityTier,
-            generation_time_ms: 0,
-            refinement_count: refinementHistory.length + 1,
+            generation_time_ms: result.generation_time_ms || 0,
+            refinement_count: validHistory.length,
           };
+
           set({
             generatedImageUrl: nextUrl,
             visualizationOutput: nextViz,
+            revisions: [...validHistory, nextRev],
+            currentRevisionIndex: validHistory.length,
+            refinementIntent: result.intent || null,
             refinementHistory: [
               ...refinementHistory,
               { prompt: instruction, imageUrl: nextUrl, timestamp: Date.now() },
@@ -502,19 +592,68 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
             generationStage: 'Design complete',
           });
         } else {
+          // Graceful failure: retain current image and revision history intact!
           set({
-            apiError: 'Refinement was unavailable.',
+            apiError: result.error_message || 'Refinement generation was unavailable.',
           });
         }
 
         set({ isRefining: false });
         setTimeout(() => set({ generationStage: null }), 1800);
       } catch (err: unknown) {
+        clearTimeout(t1);
+        clearTimeout(t2);
         const msg = err instanceof Error ? err.message : 'Design refinement failed.';
+        // Retain current image on failure without destroying valid state
         set({
           isRefining: false,
           generationStage: null,
           apiError: msg,
+        });
+      }
+    },
+
+    undoRefinement: () => {
+      const { currentRevisionIndex, revisions } = get();
+      if (currentRevisionIndex > 0) {
+        const nextIdx = currentRevisionIndex - 1;
+        set({
+          currentRevisionIndex: nextIdx,
+          generatedImageUrl: revisions[nextIdx].imageUrl,
+          apiError: null,
+        });
+      }
+    },
+
+    restoreRevision: (index: number) => {
+      const { revisions } = get();
+      if (index >= 0 && index < revisions.length) {
+        set({
+          currentRevisionIndex: index,
+          generatedImageUrl: revisions[index].imageUrl,
+          apiError: null,
+        });
+      }
+    },
+
+    resetToGeneratedDesign: () => {
+      const { revisions } = get();
+      if (revisions.length > 0) {
+        set({
+          currentRevisionIndex: 0,
+          generatedImageUrl: revisions[0].imageUrl,
+          apiError: null,
+        });
+      }
+    },
+
+    resetToOriginal: () => {
+      const { rawImageUrl } = get();
+      if (rawImageUrl) {
+        set({
+          generatedImageUrl: rawImageUrl,
+          currentRevisionIndex: -1,
+          apiError: null,
         });
       }
     },

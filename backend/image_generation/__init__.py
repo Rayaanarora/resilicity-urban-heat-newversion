@@ -11,7 +11,10 @@ from .schemas import (
     VisualizationOutput,
     ValidationReport,
     UnifiedRedesignResponse,
+    RefinementIntent,
+    RefinementResponse,
 )
+from .intent_parser import parse_refinement_intent
 from .validation import validate_image_output
 
 __all__ = [
@@ -26,5 +29,8 @@ __all__ = [
     "VisualizationOutput",
     "ValidationReport",
     "UnifiedRedesignResponse",
+    "RefinementIntent",
+    "RefinementResponse",
+    "parse_refinement_intent",
     "validate_image_output",
 ]

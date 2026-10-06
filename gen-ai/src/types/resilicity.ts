@@ -184,6 +184,35 @@ export interface ValidationReport {
   warnings: string[];
 }
 
+export interface RefinementRevision {
+  revision: number;
+  instruction: string;
+  imageUrl: string;
+  timestamp: number;
+  model?: string;
+}
+
+export interface RefineDesignResponse {
+  status: 'ready' | 'unavailable' | 'cached';
+  image_url?: string | null;
+  width?: number;
+  height?: number;
+  instruction: string;
+  provider?: string;
+  model?: string;
+  quality_tier?: 'fast' | 'final';
+  generation_time_ms?: number;
+  error_message?: string | null;
+  intent?: {
+    goal: string;
+    add: string[];
+    remove: string[];
+    modify: string[];
+    preserve: string[];
+    spatial_constraints: string[];
+  };
+}
+
 export interface UnifiedRedesignResponse {
   scene_analysis: SceneAnalysis;
   design_plan: SpatialDesignPlan;

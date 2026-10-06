@@ -176,13 +176,18 @@ export async function fetchAnalyzeAndRedesign(
 
 export async function fetchRefineDesign(
   file: File | Blob,
-  refinementPrompt: string,
-  qualityTier: 'fast' | 'final' = 'fast'
-): Promise<{ status: string; image_url: string; width: number; height: number; provider: string; model: string }> {
+  instruction: string,
+  qualityTier: 'fast' | 'final' = 'fast',
+  context?: string
+): Promise<import('../types/resilicity').RefineDesignResponse> {
   const form = new FormData();
   form.append('image', file);
-  form.append('refinement_prompt', refinementPrompt);
+  form.append('instruction', instruction);
+  form.append('refinement_prompt', instruction);
   form.append('quality_tier', qualityTier);
+  if (context) {
+    form.append('context', context);
+  }
 
   const r = await fetch(`${BASE}/refine-design`, { method: 'POST', body: form });
   if (!r.ok) {

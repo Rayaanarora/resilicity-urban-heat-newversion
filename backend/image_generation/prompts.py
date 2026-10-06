@@ -119,14 +119,76 @@ Generate a single photorealistic, high-resolution architectural photograph showi
     return prompt.strip()
 
 
-def build_refinement_prompt(base_prompt: str, user_instruction: str) -> str:
-    """Build a refinement prompt modifying an existing generated redesign."""
-    return f"""Refine this previously generated urban resilience redesign according to the user's specific adjustment:
+from .schemas import SpatialDesignPlan, SpatialInterventionSpec, DesignProfile, RefinementIntent
 
-USER INSTRUCTION: "{user_instruction}"
 
-GUIDELINES:
-- Apply the requested refinement precisely while maintaining all other cooling interventions.
-- Preserve the underlying architectural identity, perspective, and photographic realism.
-- Ensure all added elements continue to have realistic textures, lighting, and ground contact shadows.
-- Output a single photorealistic refined photograph."""
+def build_refinement_prompt(
+    user_instruction: str,
+    intent: Optional[RefinementIntent] = None,
+    context: Optional[str] = None,
+) -> str:
+    """Build a precise, spatially grounded refinement prompt for Gemini multimodal image editing.
+    
+    Transforms the current generated design according to the user's natural-language instruction,
+    incorporating structured intent (additions, removals, modifications) while strictly preserving
+    the architectural and spatial identity of the original location.
+    """
+    intent_lines: List[str] = []
+    if intent:
+        if intent.goal:
+            intent_lines.append(f"CORE GOAL: {intent.goal}")
+        if intent.add:
+            intent_lines.append(f"ELEMENTS TO ADD: {', '.join(intent.add)}")
+        if intent.remove:
+            intent_lines.append(f"ELEMENTS TO REMOVE / REDUCE: {', '.join(intent.remove)}")
+        if intent.modify:
+            intent_lines.append(f"MODIFICATIONS: {', '.join(intent.modify)}")
+        if intent.spatial_constraints:
+            intent_lines.append(f"SPATIAL RESTRAINTS: {'; '.join(intent.spatial_constraints)}")
+
+    intent_block = "\n".join(intent_lines) if intent_lines else f"EDIT REQUEST: {user_instruction}"
+
+    preserve_list = intent.preserve if (intent and intent.preserve) else [
+        "exact camera viewpoint, horizon line, and 3D street perspective",
+        "existing buildings, architecture, storefronts, and window patterns",
+        "road alignment, curb lines, and vehicular traffic corridors",
+        "vehicles, utility poles, streetlights, and existing structural elements",
+        "consistent ambient sunlight angle, natural shadows, and sky lighting",
+    ]
+    preserve_block = "\n- ".join(preserve_list)
+
+    prompt = f"""CURRENT SCENE:
+This is an AI-generated urban resilience redesign photograph of a real urban location.
+
+USER REQUEST:
+"{user_instruction}"
+
+STRUCTURED DESIGN INTENT:
+{intent_block}
+
+PRESERVE (CRITICAL ARCHITECTURAL CONSTRAINTS):
+- {preserve_block}
+
+EDIT:
+- Only make the visual modifications explicitly requested by the user and outlined above.
+- If elements are to be removed or reduced (e.g. removing a pergola or reducing trees), cleanly reconstruct the underlying sidewalk, curb, or road surface seamlessly.
+- If elements are to be added (e.g. trees, seating, bioswales, light permeable pavers), ensure they are physically plausible, placed in realistic ground positions (along sidewalk verges or pedestrian zones), and do not obstruct active traffic lanes.
+
+REALISM:
+- Photorealistic architectural quality
+- Physically plausible materials, foliage, and structural supports
+- Correct depth, scale, and perspective alignment with the existing street canyon
+- Believable cast shadows matching the ambient sunlight direction in the photo
+- Consistent pavement and curb connections with no floating artifacts
+
+DO NOT:
+- Do NOT regenerate the city or change the location.
+- Do NOT move, distort, or replace existing buildings or storefronts unless explicitly asked.
+- Do NOT shift the camera viewpoint or perspective.
+- Do NOT create floating objects, duplicated trees, or unrealistic fantasy elements.
+- Do NOT add text labels, watermarks, colored overlay masks, or geometric stickers.
+
+OUTPUT:
+Generate a single photorealistic, high-resolution architectural photograph showing the updated resilient streetscape."""
+
+    return prompt.strip()

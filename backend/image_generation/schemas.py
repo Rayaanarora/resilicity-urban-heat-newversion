@@ -74,6 +74,32 @@ class ValidationReport(BaseModel):
     warnings: List[str] = Field(default_factory=list)
 
 
+class RefinementIntent(BaseModel):
+    """Structured design intent extracted from natural-language instructions."""
+    goal: str = Field(..., description="High-level design intent of the refinement")
+    add: List[str] = Field(default_factory=list, description="Visual/architectural elements to add")
+    remove: List[str] = Field(default_factory=list, description="Elements to remove or reduce")
+    modify: List[str] = Field(default_factory=list, description="Elements to alter (scale, material, tone)")
+    preserve: List[str] = Field(default_factory=list, description="Elements and architectural geometry to strictly preserve")
+    spatial_constraints: List[str] = Field(default_factory=list, description="Physical placement and feasibility rules")
+
+
+class RefinementResponse(BaseModel):
+    """API response model for POST /api/v1/refine-design."""
+    status: Literal["ready", "unavailable", "cached"]
+    image_url: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    instruction: str
+    provider: str = "gemini"
+    model: str = "gemini-3.1-flash-image"
+    quality_tier: Literal["fast", "final"] = "fast"
+    generation_time_ms: int = 0
+    refinement_count: int = 0
+    intent: Optional[RefinementIntent] = None
+    error_message: Optional[str] = None
+
+
 class UnifiedRedesignResponse(BaseModel):
     """Comprehensive API response for POST /api/v1/analyze-and-redesign."""
     scene_analysis: SceneAnalysis

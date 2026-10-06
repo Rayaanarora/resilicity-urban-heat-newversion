@@ -226,3 +226,94 @@ def test_analyze_and_redesign_handles_provider_failure_gracefully(client):
         assert payload["visualization"]["status"] == "unavailable"
         assert "quota exceeded" in payload["visualization"]["error_message"].lower()
         assert payload["scene_analysis"]["width"] == 300
+
+
+# ---------------------------------------------------------------------------
+# Open-Ended Refinement & Intent Parsing Tests
+# ---------------------------------------------------------------------------
+from image_generation.intent_parser import parse_refinement_intent_rules
+
+
+def test_intent_parser_compound_instruction():
+    instruction = (
+        "Add four trees along the left sidewalk, replace the pavement with light permeable pavers, "
+        "add two benches under the trees, and keep all buildings unchanged."
+    )
+    intent = parse_refinement_intent_rules(instruction)
+    assert any("tree" in a.lower() for a in intent.add)
+    assert any("paver" in a.lower() for a in intent.add) or any("paver" in m.lower() for m in intent.modify)
+    assert any("benche" in a.lower() or "seating" in a.lower() for a in intent.add)
+    assert any("building" in p.lower() for p in intent.preserve)
+
+
+def test_intent_parser_removal_and_reduction():
+    instruction = "Remove the pergola and make the trees less dense"
+    intent = parse_refinement_intent_rules(instruction)
+    assert any("pergola" in r.lower() for r in intent.remove)
+    assert any("tree" in r.lower() for r in intent.remove) or any("scale" in m.lower() or "spacing" in m.lower() for m in intent.modify)
+
+
+def test_intent_parser_plausibility_adaptation():
+    instruction = "Add a giant tree in the middle of the road"
+    intent = parse_refinement_intent_rules(instruction)
+    # Must adapt to non-obstructing locations (curbs, verges, median) rather than active traffic lanes
+    assert any("traffic" in c.lower() or "lane" in c.lower() or "curb" in c.lower() for c in intent.spatial_constraints)
+
+
+def test_refine_prompt_builder_includes_constraints():
+    intent = parse_refinement_intent_rules("Keep storefronts unchanged and add shaded seating")
+    prompt = build_refinement_prompt("Keep storefronts unchanged and add shaded seating", intent=intent)
+    assert "CURRENT SCENE:" in prompt
+    assert "PRESERVE (CRITICAL ARCHITECTURAL CONSTRAINTS):" in prompt
+    assert "storefronts" in prompt.lower()
+    assert "regenerate the city" in prompt.lower()
+
+
+def test_refine_design_endpoint_success_and_caching(client):
+    import numpy as np
+    fake_img = Image.fromarray(np.random.randint(60, 200, (200, 300, 3), dtype=np.uint8))
+    mock_edit = AsyncMock(return_value=(fake_img, None))
+
+    with patch.object(GeminiImageEditingProvider, "edit", new=mock_edit):
+        file_bytes = make_test_image(300, 200)
+        res = client.post(
+            "/api/v1/refine-design",
+            files={"image": ("redesign.jpg", file_bytes, "image/jpeg")},
+            data={"instruction": "Add two more trees along the sidewalk", "quality_tier": "fast"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "ready"
+        assert data["image_url"].startswith("data:image/jpeg;base64,")
+        assert data["instruction"] == "Add two more trees along the sidewalk"
+        assert "intent" in data
+        assert mock_edit.call_count == 1
+
+        # Second identical call should hit the cache without calling edit again!
+        res_cached = client.post(
+            "/api/v1/refine-design",
+            files={"image": ("redesign.jpg", file_bytes, "image/jpeg")},
+            data={"instruction": "Add two more trees along the sidewalk", "quality_tier": "fast"},
+        )
+        assert res_cached.status_code == 200
+        assert mock_edit.call_count == 1  # Unchanged! Cached!
+
+
+def test_refine_design_endpoint_handles_failure_gracefully(client):
+    with patch.object(
+        GeminiImageEditingProvider,
+        "edit",
+        new=AsyncMock(return_value=(None, "Gemini quota exhausted")),
+    ):
+        file_bytes = make_test_image(300, 200)
+        res = client.post(
+            "/api/v1/refine-design",
+            files={"image": ("redesign.jpg", file_bytes, "image/jpeg")},
+            data={"instruction": "Turn this into a pocket park", "quality_tier": "fast"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        # Returns unavailable status with error message without crashing
+        assert data["status"] == "unavailable"
+        assert "quota" in data["error_message"].lower()
+        assert data["image_url"] is None
