@@ -194,31 +194,49 @@ Generate a single photorealistic, high-resolution architectural photograph showi
     return prompt.strip()
 
 
+SDXL_NEGATIVE_PROMPT = (
+    "cartoon, illustration, painting, 3d render, fantasy architecture, skyscraper replacement, "
+    "massive vegetation takeover, trees in traffic lanes, floating objects, "
+    "blurry, low resolution, distorted buildings, segmentation mask, colored overlay, watermark, text"
+)
+
+
 def build_sdxl_inpainting_prompt(plan: SpatialDesignPlan) -> str:
-    """Build a concise, photorealistic prompt optimized for local SDXL Inpainting (under 75 CLIP tokens)."""
-    phrases = ["photorealistic urban climate-resilient streetscape redesign"]
+    """Build a rich, photorealistic architectural prompt for local SDXL Inpainting (under 75 CLIP tokens).
+    
+    Communicates: THIS IS THE SAME REAL PHOTOGRAPH AFTER URBAN CLIMATE-RESILIENCE REDEVELOPMENT.
+    """
+    phrases = [
+        "authentic photograph of this exact real street after urban climate-resilience redevelopment"
+    ]
     seen = set()
-    for iv in plan.interventions[:3]:
+    for iv in plan.interventions:
         itype = getattr(iv, "type", "")
         if itype in seen:
             continue
         seen.add(itype)
         if itype == "tree_canopy":
-            phrases.append("mature leafy green shade tree planted in sidewalk, cast tree shadows")
+            phrases.append("mature leafy street trees planted in realistic sidewalk planting zones with natural canopy shade")
         elif itype == "cool_pavement":
-            phrases.append("light-gray solar-reflective cool pavement")
+            phrases.append("solar-reflective light-gray roadway material with preserved lane markings")
         elif itype == "permeable_pave":
-            phrases.append("permeable interlocking stone pavers with gravel joints")
-        elif itype in ("cool_roof", "green_roof"):
-            phrases.append("vegetative sedum green roof on rooftop")
+            phrases.append("light-gray permeable interlocking pedestrian paving")
+        elif itype == "green_roof":
+            phrases.append("vegetative green roof on visible flat rooftops")
+        elif itype == "cool_roof":
+            phrases.append("solar-reflective cool roof coating on visible rooftops")
         elif itype == "shade_structure":
-            phrases.append("modern architectural tensile fabric shade canopy")
+            phrases.append("modern architectural shade canopy over walkway")
+        if len(phrases) >= 4:
+            break
 
     phrases.extend([
-        "same real street",
         "same buildings",
-        "professional landscape architecture photography",
+        "same storefronts",
+        "same camera perspective",
+        "professional architectural photography",
+        "natural sunlight",
         "sharp focus",
-        "natural daylight",
     ])
     return ", ".join(phrases)
+

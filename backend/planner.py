@@ -300,10 +300,18 @@ def analyze_scene_heuristics(image: Image.Image, surfaces: Dict[str, float]) -> 
 def generate_spatial_plan(
     image: Image.Image,
     surfaces: Dict[str, float],
-    design_profile: DesignProfile = "balanced",
+    design_profile: Optional[DesignProfile] = None,
     requested_types: Optional[List[str]] = None,
 ) -> SpatialDesignPlan:
-    """Generate a high-fidelity spatial urban resilience plan tailored to site and profile."""
+    """Autonomously generate a site-tailored spatial urban resilience plan from image geometry and surface mix.
+    
+    The planner decides all interventions automatically based on:
+    - SegFormer surface perception (road, pavement, wall, roof, vegetation)
+    - Scene geometry and aspect ratio
+    - Urban canyon density vs. open roadway footprint
+    - Sidewalk availability and pedestrian space
+    - Visible rooftop presence
+    """
     analysis = analyze_scene_heuristics(image, surfaces)
 
     roof = _pct(surfaces, "roof")
@@ -311,73 +319,164 @@ def generate_spatial_plan(
     pave = _pct(surfaces, "pavement")
     hard = road + pave
     wall = _pct(surfaces, "wall")
+    veg = _pct(surfaces, "vegetation")
+    density = hard + wall
 
-    heat_drivers = []
-    if road >= 25.0:
-        heat_drivers.append(f"Extensive dark low-albedo asphalt roadway ({road:.1f}% of scene area) absorbing excessive solar radiation.")
+    has_visible_roof = roof >= 1.5
+    has_road = road >= 6.0
+    has_pedestrian_space = pave >= 3.0
+    has_wide_roadway = road >= 25.0
+    is_narrow_dense_corridor = wall >= 25.0 or (density >= 65.0 and pave < 10.0)
+    has_wide_plaza = pave >= 15.0
+
+    heat_drivers: List[str] = []
+    if road >= 20.0:
+        heat_drivers.append(f"Extensive dark low-albedo asphalt roadway ({road:.1f}% of scene) absorbing and storing daytime solar radiation.")
     if wall >= 20.0:
-        heat_drivers.append(f"Exposed concrete/masonry building facades ({wall:.1f}%) creating an urban heat canyon effect.")
-    if analysis.existing_vegetation_pct < 10.0:
-        heat_drivers.append(f"Near total absence of evaporative cooling vegetation (only {analysis.existing_vegetation_pct:.1f}% existing green cover).")
+        heat_drivers.append(f"Exposed vertical concrete/masonry building facades ({wall:.1f}%) trapping heat in an urban street canyon.")
+    if veg < 8.0:
+        heat_drivers.append(f"Acute urban canopy deficit (only {veg:.1f}% existing vegetative cover) eliminating natural evapotranspirative cooling.")
+    if hard >= 40.0:
+        heat_drivers.append(f"High impervious hardscape ratio ({hard:.1f}%) preventing groundwater recharge and exacerbating radiant heat.")
     if not heat_drivers:
-        heat_drivers.append("Unshaded hardscape exposure and thermal radiation trapping between built surfaces.")
+        heat_drivers.append("Unshaded paved surfaces and thermal radiation trapping between built surfaces.")
 
-    candidates: List[str] = []
-    if design_profile == "pedestrian_first":
-        candidates = ["tree_canopy", "permeable_pave", "shade_structure", "cool_pavement", "green_roof"]
-    elif design_profile == "maximum_cooling":
-        candidates = ["cool_pavement", "tree_canopy", "cool_roof", "shade_structure", "green_roof", "permeable_pave"]
-    elif design_profile == "green_infrastructure":
-        candidates = ["tree_canopy", "green_roof", "permeable_pave", "cool_pavement", "cool_roof"]
-    elif design_profile == "low_cost":
-        candidates = ["cool_pavement", "cool_roof", "tree_canopy", "shade_structure"]
-    else:  # balanced
-        candidates = ["tree_canopy", "cool_pavement", "permeable_pave", "cool_roof", "shade_structure"]
-
-    if requested_types:
-        candidates = [c for c in candidates if c in requested_types] + [c for c in requested_types if c in CATALOG and c not in candidates]
-
+    # Autonomous intervention decision matrix (strictly image-dependent)
     planned_interventions: List[SpatialInterventionSpec] = []
-    priority_counter = 1
+    priority = 1
 
-    for c_type in candidates:
-        meta = CATALOG.get(c_type)
-        if not meta:
-            continue
+    # 1. Tree Canopy Decision: Does site have pedestrian space, sidewalk edges, or roadside curb verges?
+    if has_pedestrian_space or (has_road and density > 10.0):
+        if is_narrow_dense_corridor:
+            placement = "Compact sidewalk planting pits and curb margins aligned along building facades"
+            reason = "Dense street canyon requires vertical shade canopy to shelter pedestrians without blocking narrow traffic lanes."
+            coverage = 0.28
+        elif has_wide_roadway:
+            placement = "Linear curbside tree buffer separating vehicular traffic from pedestrian walking path"
+            reason = "Wide asphalt roadway corridor requires continuous broad-canopy street trees to shade exposed road edges and sidewalks."
+            coverage = 0.38
+        else:
+            placement = "Evenly spaced sidewalk verge planting corridor at 8-10m intervals"
+            reason = "Intercepts direct overhead solar insolation, cools pedestrian ground level via evapotranspiration, and forms continuous shade."
+            coverage = 0.35
 
-        if c_type in ("cool_roof", "green_roof") and not analysis.has_visible_roof:
-            continue
-        if c_type in ("cool_pavement", "permeable_pave") and hard < 5.0:
-            continue
-        if c_type == "tree_canopy" and (hard + wall) < 5.0:
-            continue
-
-        coverage = meta["default_coverage"]
-        if design_profile == "maximum_cooling":
-            coverage = min(0.95, coverage + 0.15)
-        elif design_profile == "low_cost" and meta["cost"][0] == "high":
-            continue
-
-        cooling_impact = round(meta["base_cooling"] * (0.6 + 0.4 * coverage), 1)
-
-        spec = SpatialInterventionSpec(
-            type=c_type,
-            title=meta["title"],
-            target_region=meta["target"],
-            priority=priority_counter,
-            coverage=round(coverage, 2),
-            placement=meta["placement"],
-            visual_design=meta["visual_design"],
-            reason=meta["reason"],
-            feasibility=0.92 if meta["cost"][0] != "high" else 0.82,
-            cooling_impact_c=cooling_impact,
-            confidence=0.88,
+        t_meta = CATALOG["tree_canopy"]
+        planned_interventions.append(
+            SpatialInterventionSpec(
+                type="tree_canopy",
+                title=t_meta["title"],
+                target_region="pavement" if has_pedestrian_space else "road",
+                priority=priority,
+                coverage=coverage,
+                placement=placement,
+                visual_design="Mature leafy green urban shade trees with natural bark trunks firmly grounded in sidewalk tree basins casting soft cooling shadows",
+                reason=reason,
+                feasibility=0.92,
+                cooling_impact_c=round(1.2 * (0.6 + 0.4 * coverage), 1),
+                confidence=0.91,
+            )
         )
-        planned_interventions.append(spec)
-        priority_counter += 1
-        if len(planned_interventions) >= 4:
-            break
+        priority += 1
 
+    # 2. Cool Pavement Decision: Only if substantial road surface exists
+    if has_road:
+        cov = 0.75 if has_wide_roadway else 0.60
+        p_meta = CATALOG["cool_pavement"]
+        planned_interventions.append(
+            SpatialInterventionSpec(
+                type="cool_pavement",
+                title=p_meta["title"],
+                target_region="road",
+                priority=priority,
+                coverage=cov,
+                placement="Applied across open vehicular road asphalt while strictly preserving lane markings, curbs, and intersections",
+                visual_design="Light-gray architectural solar-reflective roadway coating (albedo ~0.40) preserving all painted traffic markings",
+                reason=f"Transforms {road:.1f}% dark asphalt into a high-albedo reflective surface, preventing heat absorption and dropping surface temps by 8-12°C.",
+                feasibility=0.95,
+                cooling_impact_c=round(0.8 * cov, 1),
+                confidence=0.94,
+            )
+        )
+        priority += 1
+
+    # 3. Permeable Pavers: Only if dedicated pedestrian pavement/sidewalk exists
+    if has_pedestrian_space and len(planned_interventions) < 4:
+        pp_cov = 0.60 if has_wide_plaza else 0.45
+        planned_interventions.append(
+            SpatialInterventionSpec(
+                type="permeable_pave",
+                title="Permeable interlocking pedestrian pavers",
+                target_region="pavement",
+                priority=priority,
+                coverage=pp_cov,
+                placement="Installed across pedestrian walkways, sidewalk edges, and curb walking corridors",
+                visual_design="Modular light-stone interlocking pavers with narrow permeable gravel drainage joints",
+                reason="Replaces impervious walking surfaces to encourage rainwater infiltration, reduce surface radiant heat, and improve walkability.",
+                feasibility=0.88,
+                cooling_impact_c=round(0.6 * pp_cov, 1),
+                confidence=0.87,
+            )
+        )
+        priority += 1
+
+    # 4. Rooftop Interventions: ONLY if rooftops are genuinely visible in the photograph
+    if has_visible_roof and len(planned_interventions) < 4:
+        if roof >= 5.0:
+            # Significant rooftop visible: vegetative green roof or cool roof
+            planned_interventions.append(
+                SpatialInterventionSpec(
+                    type="green_roof",
+                    title="Extensive vegetative green roof",
+                    target_region="roof",
+                    priority=priority,
+                    coverage=0.65,
+                    placement="Installed across flat structurally sound building rooftop surfaces",
+                    visual_design="Lush sedum succulent matting with organic flowering groundcover and architectural gravel perimeter drainage",
+                    reason=f"Takes advantage of {roof:.1f}% visible rooftop area to provide evaporative cooling and reduce internal building thermal gain.",
+                    feasibility=0.82,
+                    cooling_impact_c=round(1.4 * 0.65, 1),
+                    confidence=0.85,
+                )
+            )
+        else:
+            # Moderate roof area visible: cool roof coating
+            planned_interventions.append(
+                SpatialInterventionSpec(
+                    type="cool_roof",
+                    title="High-albedo cool roof coating",
+                    target_region="roof",
+                    priority=priority,
+                    coverage=0.80,
+                    placement="Coated across visible flat rooftop surfaces exposed to direct solar radiation",
+                    visual_design="Clean off-white solar-reflective elastomeric roof membrane coating (albedo ~0.80)",
+                    reason="Reflects overhead solar radiation from exposed upper building surfaces without structural modifications.",
+                    feasibility=0.94,
+                    cooling_impact_c=round(0.9 * 0.80, 1),
+                    confidence=0.92,
+                )
+            )
+        priority += 1
+
+    # 5. Tensile Shade Structure: Plausible only if pedestrian corridor exists and tree canopy alone is insufficient
+    if has_pedestrian_space and (is_narrow_dense_corridor or has_wide_plaza) and len(planned_interventions) < 4:
+        planned_interventions.append(
+            SpatialInterventionSpec(
+                type="shade_structure",
+                title="Architectural tensile shade canopy",
+                target_region="pavement",
+                priority=priority,
+                coverage=0.35,
+                placement="Suspended above sidewalk gathering zones and pedestrian transit waiting corridors",
+                visual_design="Modern geometric light-toned tensile fabric sailcloth anchored to slender structural steel columns casting crisp shadows",
+                reason="Provides immediate dense solar blockage along walking routes where underground infrastructure limits deep tree root growth.",
+                feasibility=0.90,
+                cooling_impact_c=round(0.7 * 0.35, 1),
+                confidence=0.88,
+            )
+        )
+        priority += 1
+
+    # Fallback guarantee: at least tree canopy
     if not planned_interventions:
         t_meta = CATALOG["tree_canopy"]
         planned_interventions.append(
@@ -387,7 +486,7 @@ def generate_spatial_plan(
                 target_region="pavement",
                 priority=1,
                 coverage=0.35,
-                placement=t_meta["placement"],
+                placement="Planted along street verge and sidewalk corridor",
                 visual_design=t_meta["visual_design"],
                 reason=t_meta["reason"],
                 feasibility=0.90,
@@ -397,25 +496,24 @@ def generate_spatial_plan(
         )
 
     site_summary = (
-        f"Dense urban street with {hard:.1f}% impervious hardscape (roads/sidewalks) and {wall:.1f}% building facades. "
-        f"Site exhibits high solar heat absorption and requires shaded pedestrian corridors and high-albedo surfaces."
+        f"Autonomous assessment: {density:.1f}% built density with {hard:.1f}% impervious hardscape "
+        f"({road:.1f}% roadway, {pave:.1f}% pedestrian pavement) and {wall:.1f}% building facades. "
+        f"Microclimate demands targeted shading along pedestrian verges and high-albedo road surfaces."
     )
 
-    intent_phrasing = {
-        "balanced": "Create an aesthetically cohesive, climate-resilient streetscape harmonizing mature shade trees with high-albedo road surfacing.",
-        "pedestrian_first": "Transform the pedestrian realm into a continuous, shaded, comfortable thermal corridor sheltered from direct solar heat.",
-        "maximum_cooling": "Aggressively reduce urban surface radiant temperatures across all exposed road and pavement surfaces.",
-        "green_infrastructure": "Infuse rich biophilic greenery, urban canopy trees, and permeable surfaces to restore urban natural cooling.",
-        "low_cost": "Deploy high-leverage reflective surface sealcoats and targeted shade structures delivering rapid thermal relief.",
-    }
+    overall_intent = (
+        f"Autonomously transform this streetscape into a climate-resilient urban corridor by introducing "
+        f"{', '.join(i.title.lower() for i in planned_interventions)} while strictly maintaining existing architectural "
+        f"facades, storefronts, and road geometry."
+    )
 
     return SpatialDesignPlan(
         site_summary=site_summary,
         heat_drivers=heat_drivers,
         constraints=analysis.detected_constraints,
-        design_profile=design_profile,
+        design_profile=design_profile or "balanced",
         interventions=planned_interventions,
-        overall_design_intent=intent_phrasing.get(design_profile, intent_phrasing["balanced"]),
+        overall_design_intent=overall_intent,
     )
 
 

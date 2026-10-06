@@ -64,12 +64,23 @@ from segmentation import SegFormerEngine
 IMAGE_PROVIDER = os.environ.get("IMAGE_PROVIDER", "local_sdxl").strip().lower()
 
 inpainter = ResilientInpainter()
-sdxl_provider = LocalSDXLInpaintingProvider.get_instance()
-gemini_provider = GeminiImageEditingProvider()
 
-# In-memory deterministic generation cache: key -> VisualizationOutput
+# Lazy provider construction: only instantiate SDXL if local_sdxl is active; never require Gemini API key
+sdxl_provider = LocalSDXLInpaintingProvider.get_instance() if IMAGE_PROVIDER == "local_sdxl" else None
+_gemini_provider: Optional[GeminiImageEditingProvider] = None
+
+
+def get_gemini_provider() -> GeminiImageEditingProvider:
+    global _gemini_provider
+    if _gemini_provider is None:
+        _gemini_provider = GeminiImageEditingProvider()
+    return _gemini_provider
+
+
+# In-memory deterministic generation cache: key -> cached dict with visualization & real validation
 GENERATION_CACHE: Dict[str, Dict[str, Any]] = {}
 REDESIGN_CACHE: Dict[str, Dict[str, Any]] = GENERATION_CACHE
+
 
 bundle = joblib.load(HERE / "heat_model.joblib")
 model, FRAC = bundle["model"], bundle["features"]
@@ -180,15 +191,20 @@ def compute_cache_key(img_bytes: bytes, plan_dict: Dict[str, Any], quality_tier:
 @app.get("/api/v1/health")
 def health():
     seg_info = seg_engine.get_status()
-    sdxl_info = sdxl_provider.get_status()
-    gemini_key_present = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+    sdxl_info = sdxl_provider.get_status() if sdxl_provider is not None else {
+        "available": False,
+        "loaded": False,
+        "model": "none",
+        "model_path": "",
+        "cuda_available": False,
+        "gpu_name": "None",
+        "vram_gb": 0.0,
+        "error": "Local SDXL provider not active",
+    }
     return {
         "ok": True,
         "generative_provider": IMAGE_PROVIDER,
         "local_generator": sdxl_info,
-        "gemini_configured": gemini_key_present,
-        "gemini_image_model": os.environ.get("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image"),
-        "gemini_final_model": os.environ.get("GEMINI_FINAL_IMAGE_MODEL", "gemini-3-pro-image"),
         "heat_model_available": bundle is not None and "model" in bundle,
         "segmenter_available": seg_info["available"],
         "segmenter_model": seg_info["model_name"],
@@ -201,7 +217,7 @@ def health():
 @app.post("/api/v1/analyze-and-redesign")
 async def analyze_and_redesign(
     image: UploadFile = File(...),
-    design_profile: str = Form("balanced"),
+    design_profile: Optional[str] = Form(None),
     requested_interventions: Optional[str] = Form(None),
     quality_tier: str = Form("fast"),
     refinement_prompt: Optional[str] = Form(None),
@@ -209,10 +225,10 @@ async def analyze_and_redesign(
     """End-to-end Autonomous Generative AI urban resilience pipeline.
     
     1. Scene Analysis (SegFormer semantic perception)
-    2. Autonomous Spatial Urban Design Planning
-    3. Spatial Inpainting Mask Construction
-    4. Local SDXL Inpainting (or optional Gemini provider)
-    5. Quantitative Visual Validation (diff_mean, identity preservation)
+    2. Autonomous Spatial Urban Design Planning (no user toggles required)
+    3. Spatial Inpainting Mask Construction (pedestrian curb envelopes, roadway, roofs)
+    4. Local SDXL Inpainting on NVIDIA RTX GPU
+    5. Quantitative Visual Validation (real diff_mean, pct_changed against original)
     6. Estimated Microclimate Thermal Impact Computation
     """
     t0 = time.time()
@@ -238,42 +254,27 @@ async def analyze_and_redesign(
         surfaces = {"road": 35.0, "wall": 25.0, "pavement": 15.0, "vegetation": 5.0, "roof": 0.0}
 
     # 2. Autonomous Spatial Urban Design Planner
-    req_list = None
-    if requested_interventions:
-        try:
-            req_list = json.loads(requested_interventions)
-        except Exception:
-            pass
-
     plan = generate_spatial_plan(
         pil_img,
         surfaces,
         design_profile=design_profile,  # type: ignore
-        requested_types=req_list,
     )
     analysis = analyze_scene_heuristics(pil_img, surfaces)
 
-    # 3. Deterministic Caching
+    # 3. Deterministic Caching with Real Validation Metrics
     plan_dict = plan.dict()
     cache_key = compute_cache_key(content, plan_dict, quality_tier, refinement_prompt or "")
     if cache_key in GENERATION_CACHE:
-        cached_item = GENERATION_CACHE[cache_key]
-        thermal = compute_thermal_impact(surfaces, [i.dict() for i in plan.interventions])
+        cached_entry = GENERATION_CACHE[cache_key]
         return {
             "scene_analysis": analysis.dict(),
             "design_plan": plan_dict,
-            "visualization": cached_item,
-            "thermal_impact": thermal,
-            "validation": {
-                "is_valid": True,
-                "aspect_ratio_preserved": True,
-                "dimensions_valid": True,
-                "non_blank_verified": True,
-                "diff_mean": 20.0,
-                "pct_changed": 35.0,
-                "checks_passed": ["Loaded from deterministic generation cache"],
-                "warnings": [],
-            },
+            "visualization": cached_entry["visualization"],
+            "thermal_impact": cached_entry.get(
+                "thermal_impact",
+                compute_thermal_impact(surfaces, [i.dict() for i in plan.interventions]),
+            ),
+            "validation": cached_entry["validation"],
         }
 
     # 4. Construct Spatial Inpainting Mask
@@ -289,17 +290,19 @@ async def analyze_and_redesign(
     if IMAGE_PROVIDER == "local_sdxl":
         model_name = "diffusers/stable-diffusion-xl-1.0-inpainting-0.1"
         prompt = build_sdxl_inpainting_prompt(plan)
-        edited_img, gen_error = await sdxl_provider.edit(
+        active_sdxl = sdxl_provider or LocalSDXLInpaintingProvider.get_instance()
+        edited_img, gen_error = await active_sdxl.edit(
             pil_img,
             prompt=prompt,
             quality_tier=quality_tier,
             mask_image=mask_img,
         )
     else:
+        gemini_prov = get_gemini_provider()
         base_prompt = build_redesign_prompt(plan)
         final_prompt = build_refinement_prompt(base_prompt, refinement_prompt) if refinement_prompt else base_prompt
-        model_name = gemini_provider.get_model_for_tier(quality_tier)
-        edited_img, gen_error = await gemini_provider.edit(
+        model_name = gemini_prov.get_model_for_tier(quality_tier)
+        edited_img, gen_error = await gemini_prov.edit(
             pil_img,
             prompt=final_prompt,
             model_name=model_name,
@@ -332,7 +335,13 @@ async def analyze_and_redesign(
                 "refinement_count": 0,
                 "error_message": None,
             }
-            GENERATION_CACHE[cache_key] = vis_output
+            # Cache real validation metrics along with the visualization
+            cache_entry = {
+                "visualization": vis_output,
+                "validation": report.dict(),
+                "thermal_impact": thermal,
+            }
+            GENERATION_CACHE[cache_key] = cache_entry
 
             return {
                 "scene_analysis": analysis.dict(),
@@ -399,7 +408,11 @@ async def refine_design(
     except Exception as e:
         raise HTTPException(400, f"Invalid image: {e}")
 
-    model_name = gemini_provider.get_model_for_tier(quality_tier)
+    if not os.environ.get("GEMINI_API_KEY"):
+        raise HTTPException(501, "Design refinement is disabled: autonomous local SDXL pipeline operates locally without external API keys.")
+
+    gemini_prov = get_gemini_provider()
+    model_name = gemini_prov.get_model_for_tier(quality_tier)
 
     # 1. Deterministic cache check
     img_hash = hashlib.sha256(content).hexdigest()[:16]
@@ -417,7 +430,7 @@ async def refine_design(
     prompt = build_refinement_prompt(instr_text, intent=intent, context=context)
 
     # 4. Execute multimodal image editing with Gemini
-    edited_img, gen_error = await gemini_provider.edit(
+    edited_img, gen_error = await gemini_prov.edit(
         pil_img,
         prompt=prompt,
         model_name=model_name,

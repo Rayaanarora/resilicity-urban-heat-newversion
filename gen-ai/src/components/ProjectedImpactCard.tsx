@@ -3,7 +3,7 @@ import { useResiliCityStore } from '../store/useResiliCityStore';
 import { Play, RotateCw } from 'lucide-react';
 
 export const ProjectedImpactCard: React.FC = () => {
-  const { heatMetrics, interventions, activeInterventionIds, isGenerating } = useResiliCityStore();
+  const { heatMetrics, interventions, activeInterventionIds, isGenerating, generateResilientDesign } = useResiliCityStore();
 
   return (
     <div className="rc-card p-6 flex flex-col justify-between gap-5 h-full">
@@ -60,17 +60,17 @@ export const ProjectedImpactCard: React.FC = () => {
 
       {/* Main Action Button */}
       <button
+        onClick={() => void generateResilientDesign('fast')}
         disabled={isGenerating}
         className="w-full py-3.5 rc-btn-primary rounded-xl flex items-center justify-center gap-2 text-sm font-bold shadow-md cursor-pointer disabled:opacity-50"
       >
         <Play className="w-4 h-4 fill-current" />
-        <span>Run analysis</span>
+        <span>{isGenerating ? 'Analyzing...' : 'Run Resilience Analysis'}</span>
       </button>
 
-      {/* Retry Colab Note */}
       <div className="flex items-center justify-center gap-1.5 text-xs font-mono text-slate-400">
         <RotateCw className="w-3.5 h-3.5" />
-        <span>Retry if Colab times out</span>
+        <span>Autonomous Local SDXL · RTX 3050</span>
       </div>
     </div>
   );

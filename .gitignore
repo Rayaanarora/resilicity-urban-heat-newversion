@@ -59,6 +59,11 @@ data/
 *.swp
 *.swo
 
+# Generated test artifacts
+backend/*test_output*.png
+backend/data/
+debug_*.png
+
 # Environment variables & secrets (CRITICAL: never commit credentials)
 .env
 *.env

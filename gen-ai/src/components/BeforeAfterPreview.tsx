@@ -309,22 +309,22 @@ export const BeforeAfterPreview: React.FC = () => {
             </div>
 
             <div className="flex flex-col items-center gap-1 max-w-md">
-              <span className="text-lg font-bold text-white font-sans">
-                {generationStage || 'Generating resilient redesign'}
+              <span className="text-lg font-bold text-white font-sans tracking-wide">
+                {generationStage || 'GENERATING RESILIENT REDESIGN'}
               </span>
               <p className="text-xs text-slate-300">
-                Autonomous SDXL inpainting running locally on NVIDIA RTX 3050 GPU. Grounding interventions into detected urban surfaces.
+                Local SDXL inference running on RTX 3050 6GB. Grounding interventions into detected urban surfaces.
               </p>
             </div>
 
             {/* Stepper Dots */}
             <div className="flex items-center gap-2 mt-2">
               {[
-                'Analyzing site',
-                'Mapping urban surfaces',
-                'Planning cooling interventions',
-                'Generating resilient redesign',
-                'Validating result',
+                'ANALYZING SITE',
+                'PLANNING RESILIENCE STRATEGY',
+                'MAPPING INTERVENTIONS',
+                'GENERATING LOCALLY',
+                'VALIDATING RESULT',
               ].map((step, idx) => {
                 const isCurrent = generationStage === step;
                 return (
@@ -342,7 +342,7 @@ export const BeforeAfterPreview: React.FC = () => {
         )}
       </div>
 
-      {/* AI DESIGN STRATEGY (Requirement 20: Explanatory, Informational Summary) */}
+      {/* AI DESIGN STRATEGY (Requirement 22: Explanatory, Informational Summary) */}
       <div className="border border-slate-200 rounded-2xl p-5 bg-white shadow-xs flex flex-col gap-3">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
@@ -351,8 +351,8 @@ export const BeforeAfterPreview: React.FC = () => {
               AI Design Strategy
             </span>
           </div>
-          <span className="text-[11px] font-mono text-slate-400">
-            Autonomous Urban Resilience Plan
+          <span className="text-[11px] font-mono text-emerald-700 font-semibold bg-emerald-50 px-2.5 py-0.5 rounded-md border border-emerald-200">
+            Autonomous AI Decisions
           </span>
         </div>
 
@@ -363,32 +363,45 @@ export const BeforeAfterPreview: React.FC = () => {
         </p>
 
         {/* Autonomous Interventions List */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
-          {activeList.map((iv) => (
-            <div
-              key={iv.id}
-              className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-start gap-2.5 text-xs font-sans"
-            >
-              <div className="w-7 h-7 rounded-lg bg-emerald-100/70 border border-emerald-300 flex items-center justify-center shrink-0 mt-0.5 text-emerald-800">
-                {iv.type === 'tree_canopy' ? (
-                  <Trees className="w-4 h-4" />
-                ) : iv.type === 'cool_roof' || iv.type === 'green_roof' ? (
-                  <CloudSun className="w-4 h-4" />
-                ) : (
-                  <Layers className="w-4 h-4" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+          {interventions.map((iv) => {
+            const anyIv = iv as any;
+            return (
+              <div
+                key={iv.id}
+                className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-col gap-2 text-xs font-sans"
+              >
+                <div className="flex items-start gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-100/70 border border-emerald-300 flex items-center justify-center shrink-0 mt-0.5 text-emerald-800">
+                    {iv.type === 'tree_canopy' ? (
+                      <Trees className="w-4 h-4" />
+                    ) : iv.type === 'cool_roof' || iv.type === 'green_roof' ? (
+                      <CloudSun className="w-4 h-4" />
+                    ) : (
+                      <Layers className="w-4 h-4" />
+                    )}
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-bold text-slate-900">{iv.title}</span>
+                    <span className="text-[10px] font-mono text-emerald-700 font-semibold">
+                      Target: {iv.targetRegion} · -{iv.coolingImpact.toFixed(1)}°C expected cooling
+                    </span>
+                  </div>
+                </div>
+
+                {anyIv.reason && (
+                  <p className="text-[11px] text-slate-700 leading-snug">
+                    <strong className="text-slate-900">Reason:</strong> {anyIv.reason}
+                  </p>
+                )}
+                {anyIv.placement && (
+                  <p className="text-[11px] text-slate-600 leading-snug">
+                    <strong className="text-slate-900">Placement:</strong> {anyIv.placement}
+                  </p>
                 )}
               </div>
-              <div className="flex flex-col min-w-0">
-                <span className="font-bold text-slate-900">{iv.title}</span>
-                <span className="text-slate-600 text-[11px] line-clamp-2 mt-0.5">
-                  {iv.description}
-                </span>
-                <span className="text-[10px] font-mono text-emerald-700 mt-1 font-semibold">
-                  Target: {iv.targetRegion} · -{iv.coolingImpact.toFixed(1)}°C projected cooling
-                </span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -406,7 +419,7 @@ export const BeforeAfterPreview: React.FC = () => {
         </div>
 
         <span className="text-[11px] text-slate-400">
-          Autonomous Generative AI · Local SDXL 1.0 Inpainting on RTX 3050
+          Autonomous Generative AI · Local SDXL 1.0 Inpainting on RTX 3050 6GB
         </span>
       </div>
     </div>

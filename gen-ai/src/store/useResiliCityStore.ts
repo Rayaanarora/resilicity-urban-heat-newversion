@@ -4,7 +4,6 @@ import {
   fetchSegmentation,
   fetchHealth,
   fetchAnalyzeAndRedesign,
-  fetchRefineDesign,
 } from '../services/api';
 import { TEMP_PER_SCORE_POINT, calculateHeatMetrics } from '../services/heatCalculator';
 import { SAMPLE_SCENES } from '../services/sampleData';
@@ -14,7 +13,6 @@ import type {
   DesignProfile,
   HeatScoreMetrics,
   Intervention,
-  RefinementRevision,
   SceneAnalysis,
   SpatialDesignPlan,
   SurfaceMask,
@@ -48,7 +46,7 @@ interface ResiliCityStoreState {
   planSummary: string | null;
   imageDimensions: { width: number; height: number } | null;
 
-  // Generative AI Spatial Design
+  // Autonomous Generative AI Spatial Design
   designProfile: DesignProfile;
   setDesignProfile: (profile: DesignProfile) => void;
   qualityTier: 'fast' | 'final';
@@ -57,28 +55,16 @@ interface ResiliCityStoreState {
   sceneAnalysis: SceneAnalysis | null;
   visualizationOutput: VisualizationOutput | null;
   generationStage: string | null;
-  refinementHistory: Array<{ prompt: string; imageUrl: string; timestamp: number }>;
 
-  // Open-ended Refinement Revision History
-  revisions: RefinementRevision[];
-  currentRevisionIndex: number;
-  refinementIntent: any | null;
-  undoRefinement: () => void;
-  restoreRevision: (index: number) => void;
-  resetToGeneratedDesign: () => void;
-  resetToOriginal: () => void;
-
-  // Interventions
+  // Interventions (Autonomous AI Selected - Informational)
   interventions: Intervention[];
   activeInterventionIds: string[];
   climateZone: ClimateZone;
 
-  // Inference & Caching
+  // Inference State & Caching
   isUploadedPlaceholder: boolean;
   isSegmenting: boolean;
-  isReasoning: boolean;
   isGenerating: boolean;
-  isRefining: boolean;
   apiError: string | null;
   generationCache: Record<string, string>;
 
@@ -90,8 +76,6 @@ interface ResiliCityStoreState {
   loadSampleScene: (sceneId: string) => void;
   uploadCustomImage: (file: File) => Promise<void>;
   generateResilientDesign: (tierOverride?: 'fast' | 'final') => Promise<void>;
-  refineCurrentDesign: (instruction: string) => Promise<void>;
-  toggleIntervention: (interventionId: string) => void;
   toggleMaskVisibility: (maskId: string) => void;
   setSliderPosition: (position: number) => void;
   setClimateZone: (zone: ClimateZone) => void;
@@ -115,14 +99,6 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
     initialScene.interventions.filter((i) => initialDefaultActiveIds.includes(i.id)),
     'tropical'
   );
-
-  const initialRevision: RefinementRevision = {
-    revision: 0,
-    instruction: 'Initial resilient redesign',
-    imageUrl: initialScene.afterImageUrl,
-    timestamp: Date.now(),
-    model: 'gemini-3.1-flash-image',
-  };
 
   return {
     activeTab: 'analysis',
@@ -155,11 +131,6 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
     sceneAnalysis: null,
     visualizationOutput: null,
     generationStage: null,
-    refinementHistory: [],
-
-    revisions: [initialRevision],
-    currentRevisionIndex: 0,
-    refinementIntent: null,
 
     interventions: initialScene.interventions,
     activeInterventionIds: initialDefaultActiveIds,
@@ -167,9 +138,7 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
 
     isUploadedPlaceholder: false,
     isSegmenting: false,
-    isReasoning: false,
     isGenerating: false,
-    isRefining: false,
     apiError: null,
 
     generationCache: {
@@ -196,14 +165,6 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
         get().climateZone
       );
 
-      const rev0: RefinementRevision = {
-        revision: 0,
-        instruction: 'Initial resilient redesign',
-        imageUrl: scene.afterImageUrl,
-        timestamp: Date.now(),
-        model: 'gemini-3.1-flash-image',
-      };
-
       set({
         currentSceneId: scene.id,
         currentFile: null,
@@ -225,10 +186,6 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
         sceneAnalysis: null,
         visualizationOutput: null,
         generationStage: null,
-        refinementHistory: [],
-        revisions: [rev0],
-        currentRevisionIndex: 0,
-        refinementIntent: null,
         imageDimensions: { width: 1024, height: 683 },
         activeTab: 'analysis',
       });
@@ -236,7 +193,13 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
     },
 
     uploadCustomImage: async (file: File) => {
-      set({ isSegmenting: true, apiError: null, generationStage: 'Analyzing site' });
+      set({
+        isSegmenting: true,
+        apiError: null,
+        generationStage: 'ANALYZING SITE',
+        generatedImageUrl: null, // Generated image must be null until successful generation
+        visualizationOutput: null,
+      });
 
       try {
         const dataUrl = await new Promise<string>((resolve) => {
@@ -246,114 +209,31 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
         });
 
         // 1. Semantic segmentation via SegFormer
-        set({ generationStage: 'Mapping urban surfaces' });
+        set({ generationStage: 'MAPPING INTERVENTIONS' });
         const segResult = await fetchSegmentation(file);
         const realMasks = segResult.masks;
-
-        // 2. Generate initial spatial plan & rule adaptations
-        set({ generationStage: 'Planning cooling interventions' });
-        const hasRoof = realMasks.some((m) => m.className === 'roof' && m.areaPercentage > 2);
-        const hasRoad = realMasks.some((m) => m.className === 'road' && m.areaPercentage > 5);
-        const hasSidewalk = realMasks.some((m) => (m.className === 'pavement' || m.className === 'sidewalk') && m.areaPercentage > 3);
-
-        const customInterventions: Intervention[] = [
-          {
-            id: 'gen-tree-canopy',
-            type: 'tree_canopy',
-            title: 'Native Shade Tree Canopy',
-            targetRegion: hasSidewalk ? 'sidewalk' : 'pavement',
-            priority: 1,
-            coverage: 0.65,
-            estCostTier: 'med',
-            estCostText: 'Medium cost',
-            coolingImpact: 1.8,
-            description: 'Planted high-canopy native shade trees along pedestrian paths and road verges',
-            promptTemplate: 'lush mature native canopy trees with architectural realism casting cooling shadows',
-            landCoverShift: { f_built: -0.06, f_tree: 0.06 },
-            defaultEnabled: true,
-          },
-          ...(hasRoad || hasSidewalk ? [{
-            id: 'gen-cool-pavement',
-            type: 'cool_pavement' as const,
-            title: 'Solar-Reflective Cool Pavement',
-            targetRegion: 'road' as const,
-            priority: 2,
-            coverage: 0.75,
-            estCostTier: 'med' as const,
-            estCostText: 'Medium cost',
-            coolingImpact: 1.2,
-            literatureCoolingC: 1.0,
-            description: 'Light-colored high-albedo permeable pavers and solar reflective coating',
-            promptTemplate: 'light gray solar-reflective pavement with preserved lane markings',
-            defaultEnabled: true,
-          }] : []),
-          ...(hasRoof ? [{
-            id: 'gen-cool-roof',
-            type: 'cool_roof' as const,
-            title: 'High-Albedo Cool Roof Membrane',
-            targetRegion: 'roof' as const,
-            priority: 3,
-            coverage: 0.85,
-            estCostTier: 'low' as const,
-            estCostText: 'Low cost',
-            coolingImpact: 1.5,
-            literatureCoolingC: 1.6,
-            description: 'Ultra-high SRI reflective coating applied across exposed roof surfaces',
-            promptTemplate: 'reflective white cool roof coating preserving roof equipment',
-            defaultEnabled: true,
-          }] : []),
-          {
-            id: 'gen-shade-canopy',
-            type: 'shade_structure',
-            title: 'Architectural Tensile Shade Pergola',
-            targetRegion: 'pavement',
-            priority: 4,
-            coverage: 0.40,
-            estCostTier: 'low',
-            estCostText: 'Low cost',
-            coolingImpact: 1.3,
-            description: 'Lightweight tensile fabric and timber pergola shade over walkways',
-            promptTemplate: 'modern architectural tensile shade canopy with slender timber support posts',
-            defaultEnabled: false,
-          },
-        ];
-
-        const defaultActive = customInterventions.filter((i) => i.defaultEnabled).map((i) => i.id);
-        const metrics = calculateHeatMetrics(
-          realMasks,
-          customInterventions.filter((i) => defaultActive.includes(i.id)),
-          get().climateZone
-        );
 
         set({
           currentFile: file,
           currentSceneId: `upload-${Date.now()}`,
           rawImageUrl: dataUrl,
-          generatedImageUrl: null, // Fixed: Do NOT initialize generatedImageUrl with rawImageUrl!
+          generatedImageUrl: null,
           visualizationOutput: null,
           segmentationMasks: realMasks,
           visibleMaskIds: realMasks.map((m) => m.id),
           isOverlayActive: false, // MASKS OFF by default
-          interventions: customInterventions,
-          activeInterventionIds: defaultActive,
-          heatMetrics: metrics,
           isSegmenting: false,
           isUploadedPlaceholder: false,
           segmentationSource: 'segformer',
           segmentationModelInfo: segResult.model,
-          planSource: 'rules',
+          planSource: 'vlm',
           planSummary: `Site analysis mapped ${realMasks.length} urban surface categories. Autonomous resilient redesign generating...`,
           imageDimensions: segResult.image,
-          generationStage: 'Generating resilient redesign',
-          revisions: [],
-          currentRevisionIndex: -1,
-          refinementIntent: null,
           apiError: null,
           activeTab: 'analysis',
         });
 
-        void get().refreshModelEstimate();
-        // Trigger automatic generation immediately (Requirement 16)
+        // Trigger automatic generation immediately (Requirement 18)
         void get().generateResilientDesign();
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Failed to analyze uploaded photo.';
@@ -371,16 +251,16 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
         rawImageUrl,
         designProfile,
         qualityTier,
-        interventions,
-        activeInterventionIds,
         currentSceneId,
       } = get();
 
-      const activeList = interventions.filter((i) => activeInterventionIds.includes(i.id));
-      const requestedTypes = activeList.map((i) => i.type);
       const selectedTier = tierOverride || qualityTier;
 
-      set({ isGenerating: true, apiError: null, generationStage: 'Analyzing site' });
+      set({
+        isGenerating: true,
+        apiError: null,
+        generationStage: 'ANALYZING SITE',
+      });
 
       try {
         // Resolve file to send
@@ -392,30 +272,31 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
         }
 
         if (!fileToSend) {
-          throw new Error('Please select or upload a scene photo before generating design.');
+          throw new Error('Please select or upload a street photo to generate design.');
         }
 
-        // Stepped user-friendly stages
+        // Stepped user-friendly stages (Requirement 21)
         await new Promise((r) => setTimeout(r, 200));
-        set({ generationStage: 'Mapping urban surfaces' });
+        set({ generationStage: 'PLANNING RESILIENCE STRATEGY' });
 
-        await new Promise((r) => setTimeout(r, 200));
-        set({ generationStage: 'Planning cooling interventions' });
+        await new Promise((r) => setTimeout(r, 250));
+        set({ generationStage: 'MAPPING INTERVENTIONS' });
 
-        await new Promise((r) => setTimeout(r, 200));
-        set({ generationStage: 'Generating resilient redesign' });
+        await new Promise((r) => setTimeout(r, 250));
+        set({ generationStage: 'GENERATING LOCALLY' });
 
+        // Call autonomous redesign pipeline (NO manual requested_interventions)
         const result = await fetchAnalyzeAndRedesign(
           fileToSend,
           designProfile,
-          requestedTypes,
+          undefined, // Autonomous: planner decides interventions
           selectedTier
         );
 
-        set({ generationStage: 'Validating result' });
+        set({ generationStage: 'VALIDATING RESULT' });
         await new Promise((r) => setTimeout(r, 200));
 
-        // Update spatial plan
+        // Update spatial plan and interventions
         if (result.design_plan) {
           set({
             spatialDesignPlan: result.design_plan,
@@ -423,26 +304,28 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
             planSource: 'vlm',
           });
 
-          // Enrich interventions with AI planner details (why, feasibility, coverage)
           if (result.design_plan.interventions && result.design_plan.interventions.length > 0) {
-            const planSpecs = result.design_plan.interventions;
-            const updatedInterventions = get().interventions.map((item) => {
-              const matchedSpec = planSpecs.find((s) => s.type === item.type);
-              if (matchedSpec) {
-                return {
-                  ...item,
-                  description: matchedSpec.visual_design || item.description,
-                  coverage: matchedSpec.coverage || item.coverage,
-                  coolingImpact: matchedSpec.cooling_impact_c || item.coolingImpact,
-                  // Custom enriched fields
-                  reason: matchedSpec.reason,
-                  feasibility: matchedSpec.feasibility,
-                  placement: matchedSpec.placement,
-                };
-              }
-              return item;
+            const mappedInterventions: Intervention[] = result.design_plan.interventions.map((spec, idx) => ({
+              id: `spec-${spec.type}-${idx}`,
+              type: spec.type as any,
+              title: spec.title || spec.type.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+              targetRegion: spec.target_region as any,
+              priority: spec.priority,
+              coverage: spec.coverage,
+              estCostTier: 'med',
+              estCostText: 'Medium cost',
+              coolingImpact: spec.cooling_impact_c || 1.0,
+              description: spec.visual_design || spec.reason,
+              promptTemplate: spec.visual_design,
+              defaultEnabled: true,
+              // Extra enriched fields
+              ...(spec as any),
+            }));
+
+            set({
+              interventions: mappedInterventions,
+              activeInterventionIds: mappedInterventions.map((i) => i.id),
             });
-            set({ interventions: updatedInterventions });
           }
         }
 
@@ -453,31 +336,22 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
         // Update visualization
         if (result.visualization.status === 'ready' && result.visualization.image_url) {
           const newUrl = result.visualization.image_url;
-          const cacheKey = `${fileToSend.name}_${designProfile}_${selectedTier}_${requestedTypes.sort().join('_')}`;
-
-          const rev0: RefinementRevision = {
-            revision: 0,
-            instruction: 'Initial resilient redesign',
-            imageUrl: newUrl,
-            timestamp: Date.now(),
-            model: selectedTier === 'final' ? 'gemini-3-pro-image' : 'gemini-3.1-flash-image',
-          };
+          const cacheKey = `${fileToSend.name}_${designProfile}_${selectedTier}`;
 
           set((state) => ({
             generatedImageUrl: newUrl,
             visualizationOutput: result.visualization,
-            revisions: [rev0],
-            currentRevisionIndex: 0,
             generationCache: {
               ...state.generationCache,
               [cacheKey]: newUrl,
             },
           }));
         } else {
-          // Clean fallback showing "Visualization unavailable" without fake overlays
+          // If generation failed or was rejected by validation, keep generatedImageUrl as null!
           set({
             generatedImageUrl: null,
             visualizationOutput: result.visualization,
+            apiError: result.visualization.error_message || 'Generated image could not pass validation.',
           });
         }
 
@@ -502,185 +376,16 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
 
         setTimeout(() => {
           set({ generationStage: null });
-        }, 1800);
+        }, 1500);
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Generative redesign failed.';
+        const msg = err instanceof Error ? err.message : 'Autonomous generative redesign failed.';
         set({
           isGenerating: false,
           generationStage: null,
+          generatedImageUrl: null,
           apiError: msg,
         });
       }
-    },
-
-    refineCurrentDesign: async (instruction: string) => {
-      const {
-        revisions,
-        currentRevisionIndex,
-        generatedImageUrl,
-        rawImageUrl,
-        qualityTier,
-        refinementHistory,
-      } = get();
-
-      // Use the image from the currently active revision as input to the next edit
-      const currentRev = revisions[currentRevisionIndex];
-      const targetUrl = currentRev?.imageUrl || generatedImageUrl || rawImageUrl;
-
-      if (!targetUrl) {
-        set({ apiError: 'No generated design available to refine.' });
-        return;
-      }
-
-      set({
-        isRefining: true,
-        apiError: null,
-        generationStage: 'Interpreting your design request',
-      });
-
-      // Realistic staged UI transitions driven by the request lifecycle
-      const t1 = setTimeout(() => {
-        if (get().isRefining) set({ generationStage: 'Applying changes' });
-      }, 700);
-
-      const t2 = setTimeout(() => {
-        if (get().isRefining) set({ generationStage: 'Refining visual details' });
-      }, 2200);
-
-      try {
-        const resp = await fetch(targetUrl);
-        const blob = await resp.blob();
-
-        const result = await fetchRefineDesign(blob, instruction, qualityTier);
-        clearTimeout(t1);
-        clearTimeout(t2);
-
-        set({ generationStage: 'Validating redesign' });
-        await new Promise((r) => setTimeout(r, 200));
-
-        if (result.status === 'ready' && result.image_url) {
-          const nextUrl = result.image_url;
-
-          // Branch revision history: truncate any forward undos
-          const validHistory = revisions.slice(0, currentRevisionIndex + 1);
-          const nextRev: RefinementRevision = {
-            revision: validHistory.length,
-            instruction,
-            imageUrl: nextUrl,
-            timestamp: Date.now(),
-            model: result.model || 'gemini-3.1-flash-image',
-          };
-
-          const nextViz: VisualizationOutput = {
-            status: 'ready',
-            image_url: nextUrl,
-            width: result.width,
-            height: result.height,
-            provider: result.provider || 'gemini',
-            model: result.model || 'gemini-3.1-flash-image',
-            quality_tier: qualityTier,
-            generation_time_ms: result.generation_time_ms || 0,
-            refinement_count: validHistory.length,
-          };
-
-          set({
-            generatedImageUrl: nextUrl,
-            visualizationOutput: nextViz,
-            revisions: [...validHistory, nextRev],
-            currentRevisionIndex: validHistory.length,
-            refinementIntent: result.intent || null,
-            refinementHistory: [
-              ...refinementHistory,
-              { prompt: instruction, imageUrl: nextUrl, timestamp: Date.now() },
-            ],
-            generationStage: 'Design complete',
-          });
-        } else {
-          // Graceful failure: retain current image and revision history intact!
-          set({
-            apiError: result.error_message || 'Refinement generation was unavailable.',
-          });
-        }
-
-        set({ isRefining: false });
-        setTimeout(() => set({ generationStage: null }), 1800);
-      } catch (err: unknown) {
-        clearTimeout(t1);
-        clearTimeout(t2);
-        const msg = err instanceof Error ? err.message : 'Design refinement failed.';
-        // Retain current image on failure without destroying valid state
-        set({
-          isRefining: false,
-          generationStage: null,
-          apiError: msg,
-        });
-      }
-    },
-
-    undoRefinement: () => {
-      const { currentRevisionIndex, revisions } = get();
-      if (currentRevisionIndex > 0) {
-        const nextIdx = currentRevisionIndex - 1;
-        set({
-          currentRevisionIndex: nextIdx,
-          generatedImageUrl: revisions[nextIdx].imageUrl,
-          apiError: null,
-        });
-      }
-    },
-
-    restoreRevision: (index: number) => {
-      const { revisions } = get();
-      if (index >= 0 && index < revisions.length) {
-        set({
-          currentRevisionIndex: index,
-          generatedImageUrl: revisions[index].imageUrl,
-          apiError: null,
-        });
-      }
-    },
-
-    resetToGeneratedDesign: () => {
-      const { revisions } = get();
-      if (revisions.length > 0) {
-        set({
-          currentRevisionIndex: 0,
-          generatedImageUrl: revisions[0].imageUrl,
-          apiError: null,
-        });
-      }
-    },
-
-    resetToOriginal: () => {
-      const { rawImageUrl } = get();
-      if (rawImageUrl) {
-        set({
-          generatedImageUrl: rawImageUrl,
-          currentRevisionIndex: -1,
-          apiError: null,
-        });
-      }
-    },
-
-    toggleIntervention: (interventionId: string) => {
-      // Per spec: DO NOT trigger image generation on checkbox toggle.
-      // Simply update selected interventions and numerical thermal metrics.
-      // Image generation is initiated explicitly by pressing [ GENERATE RESILIENT DESIGN ].
-      const { activeInterventionIds, interventions, segmentationMasks, climateZone } = get();
-
-      const nextActiveIds = activeInterventionIds.includes(interventionId)
-        ? activeInterventionIds.filter((id) => id !== interventionId)
-        : [...activeInterventionIds, interventionId];
-
-      const activeInterventionsList = interventions.filter((i) => nextActiveIds.includes(i.id));
-      const nextMetrics = calculateHeatMetrics(segmentationMasks, activeInterventionsList, climateZone);
-
-      set({
-        activeInterventionIds: nextActiveIds,
-        heatMetrics: nextMetrics,
-      });
-
-      void get().refreshModelEstimate();
     },
 
     toggleMaskVisibility: (maskId: string) => {
