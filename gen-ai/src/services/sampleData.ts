@@ -7,7 +7,7 @@ export const SAMPLE_SCENES: SampleScene[] = [
     location: 'High-Density Commercial & Residential Corridor',
     description: 'Narrow canyon street flanked by shopfronts and mid-rise buildings. Extreme heat trap with no tree canopy and high surface thermal absorption.',
     rawImageUrl: '/samples/sample_1_dense_urban.jpg',
-    afterImageUrl: '/samples/sample_1_dense_urban.jpg',
+    afterImageUrl: '/samples/sample_1_dense_urban_redesign.png',
     baseScore: 8.4,
     isReliable: true,
     masks: [

@@ -107,7 +107,10 @@ export const CoolingPlanCard: React.FC = () => {
                 <button
                   key={dp.id}
                   type="button"
-                  onClick={() => setDesignProfile(dp.id)}
+                  onClick={() => {
+                    setDesignProfile(dp.id);
+                    void generateResilientDesign('fast');
+                  }}
                   title={dp.tagline}
                   className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold border transition-all text-center truncate ${
                     isSelected
@@ -217,35 +220,24 @@ export const CoolingPlanCard: React.FC = () => {
         })}
       </div>
 
-      {/* Prominent Action Bar: Generate Resilient Design */}
+      {/* Action & Status Bar */}
       <div className="flex flex-col gap-2 pt-2 border-t border-slate-100">
         <div className="flex items-center gap-2">
-          {/* Primary Quick Design Button */}
+          {/* Primary Regenerate Button */}
           <button
             type="button"
-            disabled={isGenerating || isRefining || activeInterventionIds.length === 0}
+            disabled={isGenerating}
             onClick={() => void generateResilientDesign('fast')}
             className="flex-1 py-3 px-4 bg-[#0d7a5f] hover:bg-[#0b6b53] disabled:opacity-50 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition-all shadow-md font-sans"
           >
             <Sparkles className="w-4 h-4 text-emerald-300" />
-            <span>{isGenerating ? 'Generating Resilient Design...' : 'GENERATE RESILIENT DESIGN'}</span>
-          </button>
-
-          {/* Secondary Final High-Quality Button */}
-          <button
-            type="button"
-            disabled={isGenerating || isRefining || activeInterventionIds.length === 0}
-            onClick={() => void generateResilientDesign('final')}
-            className="py-3 px-3 bg-white hover:bg-slate-50 border border-slate-300 disabled:opacity-50 text-slate-800 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors font-sans whitespace-nowrap"
-            title="Render using Gemini 3 Pro Image (high-detail architectural pass)"
-          >
-            <span>Final High-Quality</span>
+            <span>{isGenerating ? 'Generating Resilient Redesign...' : 'RE-RUN AUTONOMOUS REDESIGN'}</span>
           </button>
         </div>
 
-        <div className="flex items-center justify-between text-[11px] text-slate-400 font-sans px-1">
-          <span>Toggling updates selection & numbers. Press Generate to render.</span>
-          <span className="font-mono">Tier: Fast / Final</span>
+        <div className="flex items-center justify-between text-[11px] text-slate-500 font-sans px-1">
+          <span>ResiliCity autonomously selects interventions based on site surfaces.</span>
+          <span className="font-mono text-emerald-700 font-semibold">Local SDXL · RTX 3050</span>
         </div>
       </div>
     </div>

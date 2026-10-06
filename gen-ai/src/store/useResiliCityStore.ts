@@ -329,7 +329,8 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
           currentFile: file,
           currentSceneId: `upload-${Date.now()}`,
           rawImageUrl: dataUrl,
-          generatedImageUrl: dataUrl, // Initial display before generation request
+          generatedImageUrl: null, // Fixed: Do NOT initialize generatedImageUrl with rawImageUrl!
+          visualizationOutput: null,
           segmentationMasks: realMasks,
           visibleMaskIds: realMasks.map((m) => m.id),
           isOverlayActive: false, // MASKS OFF by default
@@ -341,9 +342,9 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
           segmentationSource: 'segformer',
           segmentationModelInfo: segResult.model,
           planSource: 'rules',
-          planSummary: `Site analysis mapped ${realMasks.length} urban surface categories. Ready for generative redesign.`,
+          planSummary: `Site analysis mapped ${realMasks.length} urban surface categories. Autonomous resilient redesign generating...`,
           imageDimensions: segResult.image,
-          generationStage: null,
+          generationStage: 'Generating resilient redesign',
           revisions: [],
           currentRevisionIndex: -1,
           refinementIntent: null,
@@ -352,6 +353,8 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
         });
 
         void get().refreshModelEstimate();
+        // Trigger automatic generation immediately (Requirement 16)
+        void get().generateResilientDesign();
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Failed to analyze uploaded photo.';
         set({
@@ -473,6 +476,7 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
         } else {
           // Clean fallback showing "Visualization unavailable" without fake overlays
           set({
+            generatedImageUrl: null,
             visualizationOutput: result.visualization,
           });
         }

@@ -362,6 +362,7 @@ def generate_spatial_plan(
 
         spec = SpatialInterventionSpec(
             type=c_type,
+            title=meta["title"],
             target_region=meta["target"],
             priority=priority_counter,
             coverage=round(coverage, 2),
@@ -382,6 +383,7 @@ def generate_spatial_plan(
         planned_interventions.append(
             SpatialInterventionSpec(
                 type="tree_canopy",
+                title=t_meta["title"],
                 target_region="pavement",
                 priority=1,
                 coverage=0.35,

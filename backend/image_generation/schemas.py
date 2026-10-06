@@ -23,6 +23,7 @@ class SpatialInterventionSpec(BaseModel):
     visual_design: str = Field(..., description="Visual styling, material characteristics, colors, and textures")
     reason: str = Field(..., description="Why this intervention is selected for this specific site")
     feasibility: float = Field(default=0.9, ge=0.0, le=1.0, description="Physical and urban feasibility score")
+    title: Optional[str] = Field(default=None, description="Human readable intervention title")
     cooling_impact_c: float = Field(default=0.8, description="Estimated localized cooling in degrees Celsius")
     confidence: float = Field(default=0.85, description="Confidence in intervention placement and benefit")
 
@@ -70,6 +71,9 @@ class ValidationReport(BaseModel):
     aspect_ratio_preserved: bool
     dimensions_valid: bool
     non_blank_verified: bool
+    diff_mean: Optional[float] = None
+    pct_changed: Optional[float] = None
+    perceptual_score: Optional[float] = None
     checks_passed: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
 

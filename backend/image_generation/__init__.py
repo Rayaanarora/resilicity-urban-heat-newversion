@@ -2,7 +2,13 @@
 
 from .base import ImageEditingProvider
 from .gemini_provider import GeminiImageEditingProvider
-from .prompts import build_redesign_prompt, build_refinement_prompt
+from .sdxl_provider import LocalSDXLInpaintingProvider
+from .mask_builder import build_inpainting_mask
+from .prompts import (
+    build_redesign_prompt,
+    build_refinement_prompt,
+    build_sdxl_inpainting_prompt,
+)
 from .schemas import (
     DesignProfile,
     SpatialInterventionSpec,
@@ -20,8 +26,11 @@ from .validation import validate_image_output
 __all__ = [
     "ImageEditingProvider",
     "GeminiImageEditingProvider",
+    "LocalSDXLInpaintingProvider",
+    "build_inpainting_mask",
     "build_redesign_prompt",
     "build_refinement_prompt",
+    "build_sdxl_inpainting_prompt",
     "DesignProfile",
     "SpatialInterventionSpec",
     "SpatialDesignPlan",

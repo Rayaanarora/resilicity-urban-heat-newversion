@@ -192,3 +192,33 @@ OUTPUT:
 Generate a single photorealistic, high-resolution architectural photograph showing the updated resilient streetscape."""
 
     return prompt.strip()
+
+
+def build_sdxl_inpainting_prompt(plan: SpatialDesignPlan) -> str:
+    """Build a concise, photorealistic prompt optimized for local SDXL Inpainting (under 75 CLIP tokens)."""
+    phrases = ["photorealistic urban climate-resilient streetscape redesign"]
+    seen = set()
+    for iv in plan.interventions[:3]:
+        itype = getattr(iv, "type", "")
+        if itype in seen:
+            continue
+        seen.add(itype)
+        if itype == "tree_canopy":
+            phrases.append("mature leafy green shade tree planted in sidewalk, cast tree shadows")
+        elif itype == "cool_pavement":
+            phrases.append("light-gray solar-reflective cool pavement")
+        elif itype == "permeable_pave":
+            phrases.append("permeable interlocking stone pavers with gravel joints")
+        elif itype in ("cool_roof", "green_roof"):
+            phrases.append("vegetative sedum green roof on rooftop")
+        elif itype == "shade_structure":
+            phrases.append("modern architectural tensile fabric shade canopy")
+
+    phrases.extend([
+        "same real street",
+        "same buildings",
+        "professional landscape architecture photography",
+        "sharp focus",
+        "natural daylight",
+    ])
+    return ", ".join(phrases)
