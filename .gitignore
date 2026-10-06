@@ -58,3 +58,10 @@ data/
 .vscode/
 *.swp
 *.swo
+
+# Environment variables & secrets (CRITICAL: never commit credentials)
+.env
+*.env
+*.env.local
+*.env.*
+

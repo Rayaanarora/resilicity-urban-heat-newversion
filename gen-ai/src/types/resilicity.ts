@@ -1,4 +1,4 @@
-export type SurfaceClass = 'roof' | 'road' | 'vegetation' | 'pavement' | 'water' | 'wall' | 'sky' | 'other';
+export type SurfaceClass = 'roof' | 'road' | 'vegetation' | 'pavement' | 'sidewalk' | 'water' | 'wall' | 'sky' | 'other';
 
 export interface SurfaceMask {
   id: string;
@@ -43,6 +43,7 @@ export type InterventionType =
   | 'tree_canopy' 
   | 'cool_pavement' 
   | 'shade_structure' 
+  | 'shade_canopy'
   | 'green_roof' 
   | 'permeable_pave';
 
@@ -52,7 +53,7 @@ export interface Intervention {
   id: string;
   type: InterventionType;
   title: string;
-  targetRegion: SurfaceClass | 'sidewalk' | 'courtyard';
+  targetRegion: SurfaceClass | 'sidewalk' | 'courtyard' | 'pedestrian';
   priority: number;
   estCostTier: CostTier;
   estCostText: string;
@@ -114,4 +115,87 @@ export interface BackendStatus {
   segmenterDevice?: string;
   segmenterSource?: string;
   plannerAvailable?: boolean;
+  generativeProvider?: string;
+  geminiConfigured?: boolean;
+  geminiImageModel?: string;
+  geminiFinalModel?: string;
 }
+
+export type DesignProfile =
+  | 'balanced'
+  | 'pedestrian_first'
+  | 'maximum_cooling'
+  | 'green_infrastructure'
+  | 'low_cost';
+
+export interface SpatialInterventionSpec {
+  type: string;
+  target_region: string;
+  priority: number;
+  coverage: number;
+  placement: string;
+  visual_design: string;
+  reason: string;
+  feasibility: number;
+  cooling_impact_c: number;
+  confidence: number;
+}
+
+export interface SpatialDesignPlan {
+  site_summary: string;
+  heat_drivers: string[];
+  constraints: string[];
+  design_profile: DesignProfile;
+  interventions: SpatialInterventionSpec[];
+  overall_design_intent: string;
+}
+
+export interface SceneAnalysis {
+  width: number;
+  height: number;
+  aspect_ratio: string;
+  surface_percentages: Record<string, number>;
+  has_visible_roof: boolean;
+  has_pedestrian_sidewalk: boolean;
+  has_road_corridor: boolean;
+  existing_vegetation_pct: number;
+  detected_constraints: string[];
+}
+
+export interface VisualizationOutput {
+  status: 'ready' | 'unavailable' | 'cached';
+  image_url: string | null;
+  width?: number;
+  height?: number;
+  provider: string;
+  model: string;
+  quality_tier: 'fast' | 'final';
+  generation_time_ms: number;
+  refinement_count: number;
+  error_message?: string | null;
+}
+
+export interface ValidationReport {
+  is_valid: boolean;
+  aspect_ratio_preserved: boolean;
+  dimensions_valid: boolean;
+  non_blank_verified: boolean;
+  checks_passed: string[];
+  warnings: string[];
+}
+
+export interface UnifiedRedesignResponse {
+  scene_analysis: SceneAnalysis;
+  design_plan: SpatialDesignPlan;
+  visualization: VisualizationOutput;
+  thermal_impact: {
+    baselineSurfaceTempC: number;
+    projectedSurfaceTempC: number;
+    totalCoolingReductionC: number;
+    mlModelDeltaC: number;
+    methodology: string;
+    disclaimer: string;
+  };
+  validation: ValidationReport;
+}
+

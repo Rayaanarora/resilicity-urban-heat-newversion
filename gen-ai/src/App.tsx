@@ -38,36 +38,35 @@ export const App: React.FC = () => {
             {segmentationSource === 'segformer' && !apiError && (
               <div role="status" className="text-sm text-teal-900 bg-emerald-50 border border-emerald-300 rounded-xl px-4 py-2.5 flex items-center justify-between">
                 <span>
-                  <strong>Stage 1 Live:</strong> SegFormer semantic segmentation active ({segmentationModelInfo?.name ?? 'pretrained-b0'}). Surface area percentages directly feed Stage 2 satellite heat regression.
+                  <strong>Perception Active:</strong> SegFormer semantic segmentation ({segmentationModelInfo?.name ?? 'pretrained-b0'}) mapping urban road, pavement, vegetation, and roof boundaries to constrain generative AI redesign.
                 </span>
                 <span className="text-[11px] font-mono text-emerald-700 bg-white/80 px-2 py-0.5 rounded border border-emerald-200">
-                  {segmentationModelInfo?.device ? `device: ${segmentationModelInfo.device}` : 'live'}
+                  {segmentationModelInfo?.device ? `device: ${segmentationModelInfo.device}` : 'active'}
                 </span>
               </div>
             )}
 
             {isUploadedPlaceholder && !apiError && (
               <div role="status" className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-                Demo data: segmentation, scores and the after image for uploaded photos are placeholders until the
-                model backend is connected.
+                Demo data: upload an urban street photo to analyze surface heat drivers and generate a resilient redesign.
               </div>
             )}
 
-            {/* Row 1: Site Context & Surface Masks */}
+            {/* 1. Upload Photograph & AI Site Analysis (Perception) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
               <SiteContextCard />
               <SurfaceMasksCard />
             </div>
 
-            {/* Row 2: Heat Risk Score */}
-            <HeatRiskScoreCard />
+            {/* 2. Recommended Interventions & AI Urban Design Strategy */}
+            <CoolingPlanCard />
 
-            {/* Row 3: Before / After Intervention Preview */}
+            {/* 3. Hero Generative Before/After Redesign Visualization */}
             <BeforeAfterPreview />
 
-            {/* Row 4: Cooling Plan & Projected Impact */}
+            {/* 4. Heat Risk Score & Projected Thermal Impact Explanation */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
-              <CoolingPlanCard />
+              <HeatRiskScoreCard />
               <ProjectedImpactCard />
             </div>
           </>

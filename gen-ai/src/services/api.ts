@@ -29,6 +29,10 @@ export interface HealthResponse {
   };
   planner_available?: boolean;
   segmenter?: boolean;
+  generative_provider?: string;
+  gemini_configured?: boolean;
+  gemini_image_model?: string;
+  gemini_final_model?: string;
 }
 
 export async function fetchHeat(
@@ -127,6 +131,62 @@ export async function fetchInpaint(
   const r = await fetch(`${BASE}/inpaint`, { method: 'POST', body: form });
   if (!r.ok) {
     let msg = `Inpaint API error ${r.status}`;
+    try {
+      const d = await r.json();
+      if (d?.detail) msg = d.detail;
+    } catch {
+      // ignore
+    }
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+export async function fetchAnalyzeAndRedesign(
+  file: File | Blob,
+  designProfile: string = 'balanced',
+  requestedInterventions?: string[],
+  qualityTier: 'fast' | 'final' = 'fast',
+  refinementPrompt?: string
+): Promise<import('../types/resilicity').UnifiedRedesignResponse> {
+  const form = new FormData();
+  form.append('image', file);
+  form.append('design_profile', designProfile);
+  form.append('quality_tier', qualityTier);
+  if (requestedInterventions && requestedInterventions.length > 0) {
+    form.append('requested_interventions', JSON.stringify(requestedInterventions));
+  }
+  if (refinementPrompt) {
+    form.append('refinement_prompt', refinementPrompt);
+  }
+
+  const r = await fetch(`${BASE}/analyze-and-redesign`, { method: 'POST', body: form });
+  if (!r.ok) {
+    let msg = `Redesign API error ${r.status}`;
+    try {
+      const d = await r.json();
+      if (d?.detail) msg = d.detail;
+    } catch {
+      // ignore
+    }
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+export async function fetchRefineDesign(
+  file: File | Blob,
+  refinementPrompt: string,
+  qualityTier: 'fast' | 'final' = 'fast'
+): Promise<{ status: string; image_url: string; width: number; height: number; provider: string; model: string }> {
+  const form = new FormData();
+  form.append('image', file);
+  form.append('refinement_prompt', refinementPrompt);
+  form.append('quality_tier', qualityTier);
+
+  const r = await fetch(`${BASE}/refine-design`, { method: 'POST', body: form });
+  if (!r.ok) {
+    let msg = `Refine API error ${r.status}`;
     try {
       const d = await r.json();
       if (d?.detail) msg = d.detail;
