@@ -191,19 +191,28 @@ async def inpaint_scene(
         try:
             seg_res = seg_engine.segment_image(img)
             for m in seg_res.get("masks", []):
-                lbl = m.get("label")
-                if lbl:
-                    polygons_by_class.setdefault(lbl, []).extend(m.get("polygons", []))
+                cls_name = m.get("className") or m.get("label")
+                if cls_name:
+                    polygons_by_class.setdefault(cls_name, []).extend(m.get("polygons", []))
         except Exception as e:
             warnings.warn(f"On-the-fly segmentation failed for inpainting: {e}")
 
     try:
         inpainted_img = inpainter.inpaint(img, polygons_by_class, interventions_list)
+        orig_arr = np.array(img).astype(np.float32)
+        inpaint_arr = np.array(inpainted_img).astype(np.float32)
+        diff_mean = float(np.abs(inpaint_arr - orig_arr).mean())
+
+        poly_summary = {k: len(v) for k, v in polygons_by_class.items()}
+        print(f"[/api/v1/inpaint] interventions={len(interventions_list)}, poly_summary={poly_summary}, diff_mean={diff_mean:.2f}")
+
         data_url = encode_image_to_base64(inpainted_img)
         return {
             "ok": True,
             "imageUrl": data_url,
             "interventions_count": len(interventions_list),
+            "diff_mean": diff_mean,
+            "polygons_detected": list(polygons_by_class.keys()),
         }
     except Exception as e:
         raise HTTPException(500, f"Inpainting generation error: {e}")

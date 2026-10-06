@@ -106,6 +106,7 @@ def build_intervention(raw: dict[str, Any], surfaces: dict[str, float], index: i
         "title": meta["title"],
         "targetRegion": target,
         "priority": priority,
+        "coverage": round(coverage, 2),
         "estCostTier": meta["cost"][0],
         "estCostText": meta["cost"][1],
         "coolingImpact": round(max(0.2, impact), 1),

@@ -60,6 +60,7 @@ export interface Intervention {
   description: string;
   promptTemplate: string;
   defaultEnabled?: boolean;
+  coverage?: number;
   // Land-cover change the ML model can see (fractions of the scene, e.g. {f_built: -0.05, f_tree: 0.05}).
   landCoverShift?: Partial<Record<'f_built' | 'f_tree' | 'f_grass', number>>;
   // Optional literature-based surface cooling in deg C for albedo measures the ML model cannot see.

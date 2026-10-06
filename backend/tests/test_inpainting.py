@@ -26,6 +26,11 @@ def test_inpainter_generates_image():
     assert isinstance(out, Image.Image)
     assert out.size == (200, 200)
 
+    # Pixel diff verification
+    import numpy as np
+    diff = float(np.abs(np.array(out).astype(float) - np.array(img).astype(float)).mean())
+    assert diff > 1.0  # Verifiably modified pixels
+
     # Base64 encoding check
     data_url = encode_image_to_base64(out)
     assert data_url.startswith("data:image/jpeg;base64,")
