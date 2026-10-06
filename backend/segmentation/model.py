@@ -29,7 +29,7 @@ class SegFormerEngine:
         if env_model:
             self.model_name_or_path = env_model
             self.source = "custom_env"
-        elif LOCAL_MODEL_DIR.exists():
+        elif LOCAL_MODEL_DIR.exists() and (LOCAL_MODEL_DIR / "config.json").exists():
             self.model_name_or_path = str(LOCAL_MODEL_DIR)
             self.source = "local_fine_tuned"
         else:

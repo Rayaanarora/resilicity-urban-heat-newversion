@@ -23,13 +23,14 @@ MAX_IMAGE_BYTES = 15 * 1024 * 1024
 
 # type -> static facts. Numbers are scaled by the surface mix in build_intervention().
 CATALOG: dict[str, dict[str, Any]] = {
-    "tree_canopy": {"title": "Tree canopy expansion", "target": "sidewalk", "cost": ("med", "Medium cost")},
+    "tree_canopy": {"title": "Tree canopy expansion", "target": "pavement", "cost": ("med", "Medium cost")},
     "green_roof": {"title": "Green roof", "target": "roof", "cost": ("high", "High cost")},
     "cool_roof": {"title": "High-albedo cool roof coating", "target": "roof", "cost": ("low", "Low cost")},
     "cool_pavement": {"title": "Reflective pavement coating", "target": "road", "cost": ("med", "Medium cost")},
     "permeable_pave": {"title": "Permeable pavement", "target": "pavement", "cost": ("med", "Medium cost")},
-    "shade_structure": {"title": "Shade structures", "target": "courtyard", "cost": ("low", "Low cost")},
+    "shade_structure": {"title": "Shade structures", "target": "pavement", "cost": ("low", "Low cost")},
 }
+TARGET_NORMALIZATION = {"sidewalk": "pavement", "courtyard": "pavement"}
 VALID_TARGETS = {"road", "roof", "pavement", "wall", "vegetation", "water", "sky", "other", "sidewalk", "courtyard"}
 MAX_INTERVENTIONS = 5
 
@@ -93,6 +94,7 @@ def build_intervention(raw: dict[str, Any], surfaces: dict[str, float], index: i
 
     target = raw.get("target_region")
     target = target if target in VALID_TARGETS else meta["target"]
+    target = TARGET_NORMALIZATION.get(target, target)
     try:
         priority = max(1, int(raw.get("priority", index + 1)))
     except (TypeError, ValueError):

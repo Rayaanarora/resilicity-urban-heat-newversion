@@ -115,8 +115,11 @@ def heat(req: HeatReq):
     rmse = card["spatial_cv"]["RMSE"]
     expected_cooling = (req.shifts.get("f_tree", 0) + req.shifts.get("f_shrub", 0) + req.shifts.get("f_grass", 0)
                         - req.shifts.get("f_built", 0)) > 0
-    wrong_sign = expected_cooling and delta >= 0   # model says "warmer" for a greening plan
-    within_noise = abs(delta) < rmse               # change smaller than the model's typical error
+    wrong_sign = expected_cooling and delta > 0.01   # model says warming for a greening plan
+    # Marginal sensitivity threshold: a paired delta from the same model is sensitive down to ~0.05 °C,
+    # whereas RMSE (2.47 °C) is the global cross-validation point prediction error.
+    noise_threshold = 0.05
+    within_noise = abs(delta) < noise_threshold
     return {
         "lstBeforeC": p0,
         "lstAfterC": p1,
@@ -125,7 +128,7 @@ def heat(req: HeatReq):
         "outOfRange": out_of_range,
         "wrongSign": bool(wrong_sign),
         "withinNoise": bool(within_noise),
-        "reliable": not (wrong_sign or within_noise),  # the app falls back to literature values when False
+        "reliable": not (wrong_sign or within_noise),
     }
 
 

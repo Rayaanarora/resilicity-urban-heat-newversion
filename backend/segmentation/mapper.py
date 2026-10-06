@@ -37,12 +37,20 @@ ADE20K_TO_RESILICITY: Dict[int, str] = {
     6: "road",       # road
     54: "road",      # runway
     91: "road",      # dirt track
+    20: "road",      # car (on road surface)
+    80: "road",      # bus (on road surface)
+    83: "road",      # truck (on road surface)
+    102: "road",     # van (on road surface)
     
-    # Sidewalk / walking surfaces
+    # Sidewalk / ground / walking surfaces
+    3: "pavement",   # floor / paved ground
     11: "pavement",  # sidewalk
+    13: "pavement",  # earth / bare soil
+    46: "pavement",  # sand
     52: "pavement",  # path
     53: "pavement",  # stairs
     59: "pavement",  # stairway
+    94: "pavement",  # land / ground
     121: "pavement", # step
     140: "pavement", # pier
     
