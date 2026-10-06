@@ -32,10 +32,17 @@ def encode_image_to_base64(image: Image.Image, quality: int = 88) -> str:
 
 
 class ResilientInpainter:
-    """Procedural & depth-guided visual inpainter for urban cooling interventions."""
+    """Photorealistic architectural inpainter for urban cooling interventions."""
 
     def __init__(self):
-        pass
+        assets_dir = HERE / "assets"
+        self.tree_sprites: List[np.ndarray] = []
+        for name in ["tree_1.png", "tree_2.png"]:
+            p = assets_dir / name
+            if p.exists():
+                sprite = cv2.imread(str(p), cv2.IMREAD_UNCHANGED)
+                if sprite is not None and sprite.ndim == 3 and sprite.shape[2] == 4:
+                    self.tree_sprites.append(sprite)
 
     def inpaint(
         self,
@@ -300,85 +307,81 @@ class ResilientInpainter:
         shadow_3d = np.repeat(ground_shadow[:, :, np.newaxis], 3, axis=2)
         out = out * (1.0 - shadow_3d)
 
-        # 2. Place Leafy Canopy Clusters along Ground / Verge Boundaries
-        # Find suitable planting anchor points along upper/edge bounds of ground
-        ground_binary = (ground_mask > 0.3).astype(np.uint8) * 255
-        contours, _ = cv2.findContours(ground_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Layer for foliage painting
-        foliage_layer = np.zeros((h, w, 4), dtype=np.float32)
+        # 2. Place Real Photographic Trees along the Sidewalk / Corridor
+        if self.tree_sprites:
+            y_indices, x_indices = np.where(ground_mask > 0.25)
+            if len(x_indices) > 50:
+                # Number of trees proportional to coverage (2 to 4 trees)
+                num_trees = max(2, min(5, int(round(3.5 * cov))))
 
-        # Tree crown radius scaled to image dimensions
-        crown_rx = max(35, int(w * 0.12 * min(1.2, cov + 0.3)))
-        crown_ry = max(30, int(h * 0.14 * min(1.2, cov + 0.3)))
+                min_x = np.percentile(x_indices, 8)
+                max_x = np.percentile(x_indices, 92)
+                x_targets = np.linspace(min_x, max_x, num_trees + 2)[1:-1]
 
-        # Determine tree planting sites along sidewalk / road margins
-        num_trees = max(2, int(round(4 * cov)))
-        y_indices, x_indices = np.where(ground_mask > 0.4)
-        
-        if len(x_indices) > 50:
-            # Sort by Y ascending to place trees along mid-ground / roadside edge
-            min_y = np.percentile(y_indices, 15)
-            max_y = np.percentile(y_indices, 70)
-            eligible = (y_indices >= min_y) & (y_indices <= max_y)
-            if np.sum(eligible) > 20:
-                e_x = x_indices[eligible]
-                e_y = y_indices[eligible]
-                step = max(1, len(e_x) // num_trees)
-                
-                for t_idx in range(num_trees):
-                    sel = min(len(e_x) - 1, t_idx * step + step // 2)
-                    cx, cy = int(e_x[sel]), int(e_y[sel])
+                tree_sites = []
+                for xt in x_targets:
+                    col_mask = (np.abs(x_indices - xt) < (w * 0.12))
+                    if np.any(col_mask):
+                        col_y = y_indices[col_mask]
+                        plant_y = int(np.percentile(col_y, 45 + rng.integers(-8, 12)))
+                        plant_x = int(xt + rng.integers(-10, 10))
+                        tree_sites.append((plant_x, plant_y))
 
-                    # Draw organic multi-layered tree crown
-                    # Sub-crown 1: Deep shadow foliage interior
+                # Render background trees first (lower Y), foreground trees in front (higher Y)
+                tree_sites.sort(key=lambda pt: pt[1])
+
+                for idx, (cx, cy) in enumerate(tree_sites):
+                    sprite = self.tree_sprites[idx % len(self.tree_sprites)]
+                    sh, sw = sprite.shape[:2]
+
+                    # Perspective scaling based on planting depth in frame
+                    y_ratio = np.clip(cy / float(h), 0.35, 0.95)
+                    tree_h = int(h * (0.35 + 0.40 * y_ratio) * np.clip(cov + 0.2, 0.7, 1.25))
+                    tree_w = int(tree_h * (sw / float(sh)))
+
+                    resized = cv2.resize(sprite, (tree_w, tree_h), interpolation=cv2.INTER_AREA)
+
+                    # Soft realistic ground contact shadow beneath tree trunk
+                    shadow_rw = max(12, tree_w // 3)
+                    shadow_rh = max(4, tree_h // 14)
+                    shadow_mask = np.zeros((h, w), dtype=np.float32)
                     cv2.ellipse(
-                        foliage_layer,
-                        (cx, max(crown_ry, cy - crown_ry // 3)),
-                        (crown_rx, crown_ry),
+                        shadow_mask,
+                        (cx, min(h - 1, cy + shadow_rh // 2)),
+                        (shadow_rw, shadow_rh),
                         0, 0, 360,
-                        (28.0, 72.0, 32.0, 0.90),
+                        0.55 * cov,
                         -1,
                     )
-                    # Sub-crown 2: Mid-tone lush green leaf volume
-                    cv2.ellipse(
-                        foliage_layer,
-                        (cx - crown_rx // 6, max(crown_ry, cy - crown_ry // 2)),
-                        (int(crown_rx * 0.85), int(crown_ry * 0.85)),
-                        -10, 0, 360,
-                        (46.0, 118.0, 48.0, 0.92),
-                        -1,
-                    )
-                    # Sub-crown 3: Sunlit crown highlight
-                    cv2.ellipse(
-                        foliage_layer,
-                        (cx + crown_rx // 8, max(crown_ry, cy - int(crown_ry * 0.65))),
-                        (int(crown_rx * 0.65), int(crown_ry * 0.65)),
-                        15, 0, 360,
-                        (82.0, 162.0, 72.0, 0.85),
-                        -1,
-                    )
-                    # Tree trunk basin on ground
-                    cv2.ellipse(
-                        foliage_layer,
-                        (cx, cy),
-                        (max(4, crown_rx // 6), max(3, crown_ry // 10)),
-                        0, 0, 360,
-                        (45.0, 38.0, 32.0, 0.85),
-                        -1,
-                    )
+                    shadow_mask = cv2.GaussianBlur(shadow_mask, (15, 15), 0)
+                    out = out * (1.0 - shadow_mask[:, :, np.newaxis])
 
-        # Add organic leaf cluster fractal noise to foliage edges
-        f_alpha = foliage_layer[:, :, 3]
-        if np.max(f_alpha) > 0.05:
-            f_alpha = cv2.GaussianBlur(f_alpha, (9, 9), 0)
-            leaf_noise = cv2.resize(rng.uniform(0.75, 1.25, (h // 6, w // 6)).astype(np.float32), (w, h))
-            leaf_noise = cv2.GaussianBlur(leaf_noise, (7, 7), 0)
-            
-            f_rgb = foliage_layer[:, :, :3] * leaf_noise[:, :, np.newaxis]
-            f_alpha_3d = np.repeat(np.clip(f_alpha * 0.88, 0.0, 1.0)[:, :, np.newaxis], 3, axis=2)
+                    # Tree trunk base sits at (cx, cy)
+                    x0 = cx - tree_w // 2
+                    y0 = cy - tree_h + int(tree_h * 0.04)
+                    x1 = x0 + tree_w
+                    y1 = y0 + tree_h
 
-            out = out * (1.0 - f_alpha_3d) + np.clip(f_rgb, 0, 255) * f_alpha_3d
+                    # Clip to canvas bounds
+                    src_x0 = max(0, -x0)
+                    src_y0 = max(0, -y0)
+                    src_x1 = tree_w - max(0, x1 - w)
+                    src_y1 = tree_h - max(0, y1 - h)
+
+                    dst_x0 = max(0, x0)
+                    dst_y0 = max(0, y0)
+                    dst_x1 = min(w, x1)
+                    dst_y1 = min(h, y1)
+
+                    if dst_x1 > dst_x0 and dst_y1 > dst_y0:
+                        crop_sprite = resized[src_y0:src_y1, src_x0:src_x1]
+                        # BGRA -> RGB
+                        sprite_rgb = crop_sprite[:, :, :3][:, :, [2, 1, 0]].astype(np.float32)
+                        sprite_alpha = (crop_sprite[:, :, 3].astype(np.float32) / 255.0)[:, :, np.newaxis]
+
+                        target_roi = out[dst_y0:dst_y1, dst_x0:dst_x1]
+                        blended_roi = target_roi * (1.0 - sprite_alpha) + sprite_rgb * sprite_alpha
+                        out[dst_y0:dst_y1, dst_x0:dst_x1] = blended_roi
 
         return out
 
