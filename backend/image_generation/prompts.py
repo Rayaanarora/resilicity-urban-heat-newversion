@@ -195,20 +195,22 @@ Generate a single photorealistic, high-resolution architectural photograph showi
 
 
 SDXL_NEGATIVE_PROMPT = (
-    "cartoon, illustration, painting, 3d render, fantasy architecture, skyscraper replacement, "
-    "massive vegetation takeover, trees in traffic lanes, floating objects, "
-    "blurry, low resolution, distorted buildings, segmentation mask, colored overlay, watermark, text"
+    "cartoon, illustration, painting, drawing, 3d render, CGI, "
+    "unchanged scene, same as original, no change, subtle, identical, "
+    "blurry, out of focus, low resolution, noisy, bad architecture, "
+    "trees in traffic lanes, floating trees, floating objects, warped geometry, "
+    "text, watermark, logo, bad perspective, oversaturated neon, flat colors"
 )
 
 
-def build_sdxl_inpainting_prompt(plan: SpatialDesignPlan) -> str:
-    """Build a rich, photorealistic architectural prompt for local SDXL Inpainting (under 75 CLIP tokens).
-    
-    Communicates: THIS IS THE SAME REAL PHOTOGRAPH AFTER URBAN CLIMATE-RESILIENCE REDEVELOPMENT.
+def build_sdxl_inpainting_prompt(plan: SpatialDesignPlan, attempt: int = 0) -> str:
+    """Build a rich, photorealistic architectural prompt for local SDXL Inpainting.
+
+    Explicitly instructs the model to create visible, tangible physical objects and materials
+    in the masked areas (mature leafy trees, light-gray high-albedo road, permeable pavers, shade canopies)
+    while preserving perspective and architecture. Escalates on retries.
     """
-    phrases = [
-        "authentic photograph of this exact real street after urban climate-resilience redevelopment"
-    ]
+    elements = []
     seen = set()
     for iv in plan.interventions:
         itype = getattr(iv, "type", "")
@@ -216,27 +218,38 @@ def build_sdxl_inpainting_prompt(plan: SpatialDesignPlan) -> str:
             continue
         seen.add(itype)
         if itype == "tree_canopy":
-            phrases.append("mature leafy street trees planted in realistic sidewalk planting zones with natural canopy shade")
+            elements.append("mature leafy street trees with wooden trunks and green shade canopies")
         elif itype == "cool_pavement":
-            phrases.append("solar-reflective light-gray roadway material with preserved lane markings")
+            elements.append("solar-reflective light-gray roadway pavement with intact lane markings")
         elif itype == "permeable_pave":
-            phrases.append("light-gray permeable interlocking pedestrian paving")
-        elif itype == "green_roof":
-            phrases.append("vegetative green roof on visible flat rooftops")
-        elif itype == "cool_roof":
-            phrases.append("solar-reflective cool roof coating on visible rooftops")
+            elements.append("light-gray interlocking permeable sidewalk pavers")
         elif itype == "shade_structure":
-            phrases.append("modern architectural shade canopy over walkway")
-        if len(phrases) >= 4:
+            elements.append("modern tensile fabric shade canopy on steel columns")
+        elif itype == "green_roof":
+            elements.append("lush vegetative green roof on flat rooftops")
+        elif itype == "cool_roof":
+            elements.append("bright solar-reflective cool roof coating")
+        if len(elements) >= 3:
             break
 
-    phrases.extend([
-        "same buildings",
-        "same storefronts",
-        "same camera perspective",
-        "professional architectural photography",
-        "natural sunlight",
-        "sharp focus",
-    ])
-    return ", ".join(phrases)
+    interventions_clause = ", ".join(elements) if elements else "mature green street trees and light-gray cool pavement"
+
+    if attempt == 0:
+        prompt = (
+            f"photorealistic architectural street photograph, {interventions_clause}, "
+            "natural daylight, crisp cast shadows, sharp focus, 8k uhd, preserving buildings and street perspective"
+        )
+    elif attempt == 1:
+        prompt = (
+            f"professional architectural photograph of climate-resilient street, prominent {interventions_clause}, "
+            "vibrant leafy foliage, bright reflective pavement, natural sunlight, sharp focus, 8k"
+        )
+    else:
+        prompt = (
+            f"award-winning urban landscape photograph, transformative {interventions_clause}, "
+            "dense green shade trees, clean light cool roadway, authentic architectural streetscape, sharp focus"
+        )
+
+    return prompt
+
 

@@ -74,6 +74,10 @@ class ValidationReport(BaseModel):
     diff_mean: Optional[float] = None
     pct_changed: Optional[float] = None
     perceptual_score: Optional[float] = None
+    masked_diff: Optional[float] = None
+    unmasked_diff: Optional[float] = None
+    architecture_preserved: Optional[bool] = None
+    interventions_detected: Optional[List[str]] = None
     checks_passed: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
 

@@ -1,14 +1,16 @@
-"""Local SDXL Inpainting Provider implementation for autonomous urban redesign."""
+"""Local SDXL Inpainting Provider with retry logic for autonomous urban redesign."""
 
 import asyncio
 import logging
 import os
+import random
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image
 
 import torch
+import numpy as np
 
 from .base import ImageEditingProvider
 
@@ -20,8 +22,13 @@ DEFAULT_NEGATIVE_PROMPT = (
     "floating tree, deformed tree, duplicated objects, "
     "tree in road, tree inside building, unrealistic jungle, "
     "segmentation mask, colored overlay, text, watermark, "
-    "blurry, low resolution, distorted architecture"
+    "blurry, low resolution, distorted architecture, "
+    "unchanged image, same as original, no modification"
 )
+
+# Minimum mean pixel difference to consider the generation as visibly changed
+MIN_MASKED_DIFF = 12.0
+MIN_OVERALL_DIFF = 6.0
 
 
 def _compute_working_dimensions(width: int, height: int, max_dim: int = 512) -> Tuple[int, int]:
@@ -32,8 +39,36 @@ def _compute_working_dimensions(width: int, height: int, max_dim: int = 512) -> 
     return max(w_scaled, 64), max(h_scaled, 64)
 
 
+def _compute_masked_diff(
+    original: Image.Image,
+    generated: Image.Image,
+    mask: Image.Image,
+) -> Tuple[float, float]:
+    """Compute mean pixel difference overall and within the masked region only."""
+    w, h = generated.size
+    orig_resized = original.convert("RGB").resize((w, h), Image.Resampling.LANCZOS)
+    mask_resized = mask.convert("L").resize((w, h), Image.Resampling.NEAREST)
+
+    orig_arr = np.array(orig_resized).astype(np.float32)
+    gen_arr = np.array(generated.convert("RGB")).astype(np.float32)
+    mask_arr = (np.array(mask_resized) > 30).astype(np.float32)
+
+    abs_diff = np.abs(gen_arr - orig_arr)
+    overall_diff = float(np.mean(abs_diff))
+
+    # Masked-region difference
+    mask_3d = np.stack([mask_arr] * 3, axis=2)
+    masked_pixels = mask_3d.sum()
+    if masked_pixels > 0:
+        masked_diff = float((abs_diff * mask_3d).sum() / masked_pixels)
+    else:
+        masked_diff = overall_diff
+
+    return overall_diff, masked_diff
+
+
 class LocalSDXLInpaintingProvider(ImageEditingProvider):
-    """Local SDXL Inpainting provider running on NVIDIA RTX GPU."""
+    """Local SDXL Inpainting provider running on NVIDIA RTX GPU with retry logic."""
 
     _instance: Optional["LocalSDXLInpaintingProvider"] = None
 
@@ -90,15 +125,18 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
             if self.use_cpu_offload:
                 pipe.enable_model_cpu_offload()
 
-            try:
-                pipe.enable_vae_slicing()
-            except Exception as e:
-                logger.warning("Could not enable VAE slicing: %s", e)
+            if hasattr(pipe, "vae") and pipe.vae is not None:
+                try:
+                    pipe.vae.enable_slicing()
+                    logger.info("VAE slicing enabled on pipe.vae")
+                except Exception as e:
+                    logger.warning("Could not enable VAE slicing: %s", e)
 
-            try:
-                pipe.enable_vae_tiling()
-            except Exception as e:
-                logger.warning("Could not enable VAE tiling: %s", e)
+                try:
+                    pipe.vae.enable_tiling()
+                    logger.info("VAE tiling enabled on pipe.vae")
+                except Exception as e:
+                    logger.warning("Could not enable VAE tiling: %s", e)
 
             self.pipe = pipe
             self.is_loaded = True
@@ -123,6 +161,39 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
             "error": self.load_error,
         }
 
+    def _run_inference(
+        self,
+        input_img: Image.Image,
+        work_mask: Image.Image,
+        prompt: str,
+        neg_prompt: str,
+        steps: int,
+        strength: float,
+        guidance_scale: float,
+        seed: int,
+        work_w: int,
+        work_h: int,
+    ) -> Image.Image:
+        """Run a single SDXL inference pass. Returns the generated image at working resolution."""
+        generator = torch.Generator(device="cuda").manual_seed(seed)
+
+        with torch.inference_mode():
+            result = self.pipe(
+                prompt=prompt,
+                negative_prompt=neg_prompt,
+                image=input_img,
+                mask_image=work_mask,
+                strength=strength,
+                guidance_scale=guidance_scale,
+                num_inference_steps=steps,
+                generator=generator,
+            ).images[0]
+
+        if result.size != (work_w, work_h):
+            result = result.resize((work_w, work_h), Image.Resampling.LANCZOS)
+
+        return result
+
     async def edit(
         self,
         image: Image.Image,
@@ -131,8 +202,13 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
         model_name: Optional[str] = None,
         quality_tier: str = "fast",
         mask_image: Optional[Image.Image] = None,
+        seed: Optional[int] = None,
+        strength: Optional[float] = None,
+        guidance_scale: Optional[float] = None,
+        steps: Optional[int] = None,
+        max_retries: int = 1,
     ) -> Tuple[Optional[Image.Image], Optional[str]]:
-        """Run local SDXL inpainting with spatial mask and identity preservation."""
+        """Run local SDXL inpainting with spatial mask, with optional dynamic params and retry."""
         if not self.cuda_available:
             return None, "CUDA GPU is not available for local generation."
 
@@ -147,81 +223,127 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
 
                 orig_w, orig_h = image.size
 
-                # Working resolution: 512 for fast, 768 for final tier if requested
+                # Working resolution: 512 for fast, 768 for final
                 max_dim = self.max_dim if quality_tier == "fast" else min(768, self.max_dim + 256)
                 work_w, work_h = _compute_working_dimensions(orig_w, orig_h, max_dim=max_dim)
 
                 input_img = image.convert("RGB").resize((work_w, work_h), Image.Resampling.LANCZOS)
 
-                # Prepare inpainting mask
+                # Prepare inpainting mask — ensure BINARY (0 or 255)
                 if mask_image is not None:
                     work_mask = mask_image.convert("L").resize((work_w, work_h), Image.Resampling.NEAREST)
+                    mask_arr = np.array(work_mask)
+                    mask_arr = np.where(mask_arr > 30, 255, 0).astype(np.uint8)
+                    work_mask = Image.fromarray(mask_arr, mode="L")
                 else:
-                    # Fallback mask: roadside planting corridor (lower 40% height on left/right edges)
                     from PIL import ImageDraw
                     work_mask = Image.new("L", (work_w, work_h), 0)
                     draw = ImageDraw.Draw(work_mask)
-                    draw.rectangle([0, int(work_h * 0.5), int(work_w * 0.35), work_h], fill=255)
-                    draw.rectangle([int(work_w * 0.65), int(work_h * 0.5), work_w, work_h], fill=255)
+                    draw.rectangle([0, int(work_h * 0.4), int(work_w * 0.30), work_h], fill=255)
+                    draw.rectangle([int(work_w * 0.70), int(work_h * 0.4), work_w, work_h], fill=255)
+                    draw.rectangle([int(work_w * 0.10), int(work_h * 0.55), int(work_w * 0.90), work_h], fill=255)
 
                 neg_prompt = (negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT)
 
-                # Inference steps based on quality tier
-                steps = self.steps if quality_tier == "fast" else min(28, self.steps + 6)
+                # Inference steps based on quality tier or caller override
+                base_steps = steps or (self.steps if quality_tier == "fast" else min(28, self.steps + 6))
+                base_strength = strength or self.strength
+                base_guidance = guidance_scale or self.guidance_scale
 
                 logger.info(
-                    "Local SDXL Inpainting start: res=%dx%d steps=%d scale=%.1f device=%s",
-                    work_w,
-                    work_h,
-                    steps,
-                    self.guidance_scale,
-                    self.gpu_name,
+                    "Local SDXL Inpainting start: res=%dx%d steps=%d strength=%.2f scale=%.1f device=%s",
+                    work_w, work_h, base_steps, base_strength, base_guidance, self.gpu_name,
                 )
 
                 if self.cuda_available:
                     torch.cuda.reset_peak_memory_stats()
 
                 t0 = time.time()
-                generator = torch.Generator(device="cuda").manual_seed(42)
+                best_result = None
+                best_diff = 0.0
 
-                try:
-                    with torch.inference_mode():
-                        result = self.pipe(
-                            prompt=prompt,
-                            negative_prompt=neg_prompt,
-                            image=input_img,
-                            mask_image=work_mask,
-                            strength=self.strength,
-                            guidance_scale=self.guidance_scale,
-                            num_inference_steps=steps,
-                            generator=generator,
-                        ).images[0]
+                for attempt in range(max_retries):
+                    current_seed = seed if (seed is not None and attempt == 0) else (42 if attempt == 0 else random.randint(1, 999999))
+                    attempt_guidance = base_guidance + (attempt * 1.5)
+                    attempt_strength = min(1.0, base_strength + (attempt * 0.003))
+                    attempt_steps = base_steps + (attempt * 2)
 
-                    elapsed = time.time() - t0
-                    peak_vram = (
-                        torch.cuda.max_memory_allocated() / (1024 ** 3)
-                        if self.cuda_available
-                        else 0.0
-                    )
                     logger.info(
-                        "Local SDXL Inpainting finished in %.2fs (Peak VRAM: %.2f GB)",
-                        elapsed,
-                        peak_vram,
+                        "SDXL attempt %d/%d: seed=%d guidance=%.1f strength=%.3f steps=%d",
+                        attempt + 1, max_retries, current_seed, attempt_guidance, attempt_strength, attempt_steps,
                     )
 
-                    # Upscale back to source photograph dimensions with high fidelity
-                    final_img = result.resize((orig_w, orig_h), Image.Resampling.LANCZOS)
-                    return final_img, None
+                    try:
+                        result = self._run_inference(
+                            input_img=input_img,
+                            work_mask=work_mask,
+                            prompt=prompt,
+                            neg_prompt=neg_prompt,
+                            steps=attempt_steps,
+                            strength=attempt_strength,
+                            guidance_scale=attempt_guidance,
+                            seed=current_seed,
+                            work_w=work_w,
+                            work_h=work_h,
+                        )
 
-                except torch.cuda.OutOfMemoryError:
-                    if self.cuda_available:
-                        torch.cuda.empty_cache()
-                    logger.error("CUDA OOM error during SDXL inpainting generation.")
-                    return None, "CUDA Out of Memory on RTX 3050. Reduce working resolution or batch."
-                except Exception as e:
-                    if self.cuda_available:
-                        torch.cuda.empty_cache()
-                    logger.error("SDXL generation error: %s", e, exc_info=True)
-                    return None, f"Local SDXL generation error: {e}"
+                        # Check if the result is visibly different from input
+                        overall_diff, masked_diff = _compute_masked_diff(input_img, result, work_mask)
+
+                        logger.info(
+                            "SDXL attempt %d result: overall_diff=%.2f, masked_diff=%.2f",
+                            attempt + 1, overall_diff, masked_diff,
+                        )
+
+                        # Keep the best result
+                        if masked_diff > best_diff:
+                            best_diff = masked_diff
+                            best_result = result
+
+                        # Accept if the masked region changed enough
+                        if masked_diff >= MIN_MASKED_DIFF and overall_diff >= MIN_OVERALL_DIFF:
+                            logger.info(
+                                "SDXL accepted on attempt %d (masked_diff=%.2f, overall=%.2f)",
+                                attempt + 1, masked_diff, overall_diff,
+                            )
+                            break
+
+                        logger.warning(
+                            "SDXL attempt %d rejected: masked_diff=%.2f < %.2f (will retry)",
+                            attempt + 1, masked_diff, MIN_MASKED_DIFF,
+                        )
+
+                    except torch.cuda.OutOfMemoryError:
+                        if self.cuda_available:
+                            torch.cuda.empty_cache()
+                        logger.error("CUDA OOM on attempt %d", attempt + 1)
+                        if attempt == max_retries - 1:
+                            return None, "CUDA Out of Memory on RTX 3050."
+                        continue
+                    except Exception as e:
+                        if self.cuda_available:
+                            torch.cuda.empty_cache()
+                        logger.error("SDXL generation error attempt %d: %s", attempt + 1, e, exc_info=True)
+                        if attempt == max_retries - 1:
+                            return None, f"Local SDXL generation error: {e}"
+                        continue
+
+                elapsed = time.time() - t0
+                peak_vram = (
+                    torch.cuda.max_memory_allocated() / (1024 ** 3)
+                    if self.cuda_available
+                    else 0.0
+                )
+                logger.info(
+                    "Local SDXL Inpainting finished in %.2fs (%d attempts, Peak VRAM: %.2f GB, best_masked_diff=%.2f)",
+                    elapsed, min(attempt + 1, max_retries), peak_vram, best_diff,
+                )
+
+                if best_result is None:
+                    return None, "All SDXL attempts failed to produce output."
+
+                # Upscale back to source photograph dimensions with high fidelity
+                final_img = best_result.resize((orig_w, orig_h), Image.Resampling.LANCZOS)
+                return final_img, None
 
             return await loop.run_in_executor(None, _sync_generate)
