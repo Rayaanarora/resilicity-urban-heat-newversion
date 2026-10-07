@@ -139,6 +139,7 @@ export interface SpatialInterventionSpec {
   feasibility: number;
   cooling_impact_c: number;
   confidence: number;
+  title?: string;
 }
 
 export interface SpatialDesignPlan {

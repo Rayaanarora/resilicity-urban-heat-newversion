@@ -33,7 +33,6 @@ export const BeforeAfterPreview: React.FC = () => {
     visualizationOutput,
     spatialDesignPlan,
     interventions,
-    activeInterventionIds,
   } = useResiliCityStore();
 
   // Load natural aspect ratio of the raw image to prevent distortion
@@ -81,9 +80,6 @@ export const BeforeAfterPreview: React.FC = () => {
 
   const isUnavailable = visualizationOutput?.status === 'unavailable';
   const hasGeneratedDesign = Boolean(generatedImageUrl);
-
-  // Strategy summary lines from spatial design plan or active interventions
-  const activeList = interventions.filter((i) => activeInterventionIds.includes(i.id));
 
   return (
     <div
