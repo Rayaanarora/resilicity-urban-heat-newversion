@@ -71,8 +71,7 @@ def compute_tree_row_layout(
     5. Computes perspective-scaled canopy radii and tree dimensions from relative depth.
     """
     if depth_map is None:
-        y_grad = np.linspace(1.0, 0.0, height)[:, None]
-        depth_map = 1.0 - y_grad
+        depth_map = np.tile(np.linspace(1.0, 0.0, height)[:, None], (1, width))
 
     # Restrict to specified sidewalk side
     active_sw = sidewalk_mask.copy()
@@ -93,22 +92,31 @@ def compute_tree_row_layout(
 
     y_min, y_max = int(np.min(sw_y)), int(np.max(sw_y))
 
+    # Identify side of street
+    sw_all_xs = sw_x
+    median_sw_x = float(np.median(sw_all_xs)) if sw_all_xs.size > 0 else width * 0.75
+    side_name = "left" if (target_zone == "left_sidewalk" or (target_zone is None and median_sw_x < width * 0.5)) else "right"
+
     # Identify curbside interface (boundary between sidewalk and road)
     curb_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
     dilated_road = cv2.dilate(road_mask.astype(np.uint8), curb_kernel)
     curbside_mask = active_sw & (dilated_road > 0)
     has_curbside = np.count_nonzero(curbside_mask) > 50
 
-    # Derive complete corridor polyline from near foreground to midground/vanishing point
+    # Derive complete corridor polyline along the sidewalk buffer
     corridor_points: List[List[float]] = []
     y_step = max(3, (y_max - y_min) // 35)
     for y_cur in range(y_max, y_min - 1, -y_step):
-        if has_curbside and np.any(curbside_mask[y_cur]):
-            row_xs = np.where(curbside_mask[y_cur])[0]
-        else:
-            row_xs = sw_x[sw_y == y_cur]
+        row_xs = sw_x[sw_y == y_cur]
         if row_xs.size > 0:
-            corridor_points.append([float(np.median(row_xs)), float(y_cur)])
+            sw_w = float(np.max(row_xs) - np.min(row_xs))
+            if side_name == "right":
+                # Indent from curb edge (left edge of right sidewalk) into sidewalk buffer
+                c_x = float(np.min(row_xs)) + max(12.0, min(sw_w * 0.08, 24.0))
+            else:
+                # Indent from curb edge (right edge of left sidewalk) into sidewalk buffer
+                c_x = float(np.max(row_xs)) - max(12.0, min(sw_w * 0.08, 24.0))
+            corridor_points.append([c_x, float(y_cur)])
 
     # Proximity exclusion radius around protected objects (in pixels)
     prot_dist_transform = None
@@ -118,7 +126,7 @@ def compute_tree_row_layout(
 
     # Perspective recession: target progress along sidewalk corridor from near to far
     n_trees = max(2, requested_trees)
-    t_targets = np.linspace(0.06, 0.76, n_trees)
+    t_targets = np.linspace(0.24, 0.78, n_trees)
 
     anchors: List[Dict[str, Any]] = []
     selected_ys: List[int] = []
@@ -128,7 +136,7 @@ def compute_tree_row_layout(
         best_cand = None
         best_cand_score = -1e9
 
-        search_half_window = max(12, int((y_max - y_min) * 0.12))
+        search_half_window = max(14, int((y_max - y_min) * 0.12))
         search_window = range(
             max(y_min, target_y - search_half_window),
             min(y_max, target_y + search_half_window + 1),
@@ -137,39 +145,47 @@ def compute_tree_row_layout(
 
         for y_cand in search_window:
             # Enforce minimum vertical separation from previously placed anchors
-            if any(abs(y_cand - prev_y) < int((y_max - y_min) * 0.22) for prev_y in selected_ys):
+            if any(abs(y_cand - prev_y) < int((y_max - y_min) * 0.20) for prev_y in selected_ys):
                 continue
 
-            if has_curbside and np.any(curbside_mask[y_cand]):
-                row_xs = np.where(curbside_mask[y_cand])[0]
-            else:
-                row_xs = sw_x[sw_y == y_cand]
+            row_xs = sw_x[sw_y == y_cand]
             if row_xs.size == 0:
                 continue
 
-            x_cand = int(np.median(row_xs))
+            sw_w = float(np.max(row_xs) - np.min(row_xs))
+            if sw_w < 20.0:
+                continue
 
-            # Strictly reject or adjust if in active roadway
-            if road_mask[y_cand, x_cand]:
-                shifted = False
-                for dx in (-15, 15, -25, 25):
-                    cand_x_shift = int(np.clip(x_cand + dx, 0, width - 1))
-                    if active_sw[y_cand, cand_x_shift] and not road_mask[y_cand, cand_x_shift]:
-                        x_cand = cand_x_shift
-                        shifted = True
-                        break
-                if not shifted:
+            # Place within the sidewalk planting strip (buffer between curb and pedestrian corridor)
+            if side_name == "right":
+                curb_edge = float(np.min(row_xs))
+                # Offset ~6-8% into sidewalk so trunk sits squarely in the curbside buffer
+                cand_offset = max(12.0, min(sw_w * 0.08, 24.0))
+                x_cand = int(round(curb_edge + cand_offset))
+            else:
+                curb_edge = float(np.max(row_xs))
+                cand_offset = max(12.0, min(sw_w * 0.08, 24.0))
+                x_cand = int(round(curb_edge - cand_offset))
+
+            x_cand = int(np.clip(x_cand, 0, width - 1))
+
+            # Strictly reject or adjust if candidate falls outside sidewalk or on roadway
+            if not active_sw[y_cand, x_cand] or road_mask[y_cand, x_cand]:
+                # Snap to valid sidewalk pixel
+                valid_row_xs = [x for x in row_xs if not road_mask[y_cand, x]]
+                if not valid_row_xs:
                     continue
+                x_cand = int(valid_row_xs[len(valid_row_xs) // 3])
 
             # Strictly reject if near protected objects (cars, pedestrians, poles)
             dist_to_prot = 999.0
             if prot_dist_transform is not None:
                 dist_to_prot = float(prot_dist_transform[y_cand, x_cand])
-                if dist_to_prot < 16.0:
+                if dist_to_prot < 20.0:
                     continue
 
             y_dist = abs(y_cand - target_y)
-            score = -y_dist + min(40.0, dist_to_prot) * 0.4
+            score = -y_dist + min(40.0, dist_to_prot) * 0.5
             if score > best_cand_score:
                 best_cand_score = score
                 best_cand = (x_cand, y_cand)
@@ -179,17 +195,18 @@ def compute_tree_row_layout(
             selected_ys.append(y_plant)
 
             rel_depth = float(depth_map[y_plant, x_plant])
-            # Bounded perspective scaling: foreground scale ~0.95, receding to ~0.35
-            scale = float(np.clip(1.0 - 0.68 * rel_depth, 0.32, 0.95))
+            # Bounded perspective scaling: foreground scale ~0.95, receding to ~0.42
+            scale = float(np.clip(1.0 - 0.60 * rel_depth, 0.42, 0.98))
 
-            # Cap maximum tree dimensions to preserve urban street context
-            tree_h = int(round(height * 0.27 * scale))
-            canopy_rx = int(round(width * 0.085 * scale))
-            canopy_ry = int(round(tree_h * 0.44))
-            trunk_w = max(4, int(round(width * 0.016 * scale)))
+            # Realistic urban street tree proportions:
+            # Mature street tree canopy stands 2-3 stories tall (typically 38-42% of image height in foreground)
+            tree_h = int(round(height * 0.40 * scale))
+            canopy_rx = int(round(tree_h * 0.33))
+            canopy_ry = int(round(tree_h * 0.40))
+            trunk_w = max(6, int(round(width * 0.018 * scale)))
             canopy_cy = max(canopy_ry + 10, y_plant - int(tree_h * 0.58))
-            pit_w = max(12, int(round(trunk_w * 3.5)))
-            pit_d = max(8, int(round(trunk_w * 1.6)))
+            pit_w = max(16, int(round(trunk_w * 3.5)))
+            pit_d = max(10, int(round(trunk_w * 1.8)))
             intended_shade = round(float(np.pi * canopy_rx * canopy_ry * 0.45 / (width * height) * 100.0), 2)
 
             anchors.append({
@@ -211,11 +228,11 @@ def compute_tree_row_layout(
         for pt in [corridor_points[0], corridor_points[-1]]:
             px, py = int(pt[0]), int(pt[1])
             d = float(depth_map[py, px]) if depth_map is not None else 0.5
-            s = float(np.clip(1.0 - 0.68 * d, 0.32, 0.95))
-            th = int(round(height * 0.27 * s))
-            tw = max(4, int(round(width * 0.016 * s)))
-            rx = int(round(width * 0.085 * s))
-            ry = int(round(th * 0.44))
+            s = float(np.clip(1.0 - 0.60 * d, 0.42, 0.98))
+            th = int(round(height * 0.50 * s))
+            tw = max(6, int(round(width * 0.020 * s)))
+            rx = int(round(th * 0.40))
+            ry = int(round(th * 0.45))
             anchors.append({
                 "x": px,
                 "y": py,
@@ -226,7 +243,7 @@ def compute_tree_row_layout(
                 "tree_height": th,
                 "trunk_width": tw,
                 "canopy_center_y": max(int(height * 0.1), py - int(th * 0.58)),
-                "planting_pit": {"width": max(12, int(tw * 3.5)), "depth": max(8, int(tw * 1.6))},
+                "planting_pit": {"width": max(16, int(tw * 3.5)), "depth": max(10, int(tw * 1.8))},
                 "intended_shade_coverage": round(float(np.pi * rx * ry * 0.45 / (width * height) * 100.0), 2),
             })
 
@@ -240,8 +257,6 @@ def compute_tree_row_layout(
             for i in range(len(anchors) - 1)
         ]
         spacing_px = float(np.mean(dists))
-
-    side_name = "left" if (target_zone == "left_sidewalk" or (target_zone is None and len(anchors) > 0 and anchors[0]["x"] < width * 0.5)) else "right"
 
     planting_points = []
     all_ground_anchors = []
@@ -288,8 +303,8 @@ def compute_tree_row_layout(
 
     mean_depth = round(float(np.mean(depth_values)), 3) if depth_values else 0.5
     mean_scale = round(float(np.mean(scale_values)), 3) if scale_values else 0.7
-    mean_tree_h = int(np.mean([a["tree_height"] for a in anchors])) if anchors else int(height * 0.3)
-    mean_trunk_w = int(np.mean([a["trunk_width"] for a in anchors])) if anchors else int(width * 0.015)
+    mean_tree_h = int(np.mean([a["tree_height"] for a in anchors])) if anchors else int(height * 0.4)
+    mean_trunk_w = int(np.mean([a["trunk_width"] for a in anchors])) if anchors else int(width * 0.018)
     total_intended_shade = round(sum(a.get("intended_shade_coverage", 0.0) for a in anchors), 2)
 
     return {
@@ -310,6 +325,7 @@ def compute_tree_row_layout(
         # Backwards-compatible keys
         "anchors": anchors,
     }
+
 
 
 def compute_shade_structure_layout(
@@ -355,17 +371,21 @@ def compute_shade_structure_layout(
         default_y1 = int(height * 0.75)
         default_y2 = int(height * 0.65)
         support_points = [[float(default_x1), float(default_y1)], [float(default_x2), float(default_y2)]]
+        top_y1 = default_y1 - int(height * 0.18)
+        top_y2 = default_y2 - int(height * 0.14)
+        span_x1 = max(15, int(width * 0.07))
+        span_x2 = max(10, int(width * 0.05))
         footprint_polygon = [
-            [float(default_x1 - 10), float(default_y1 - int(height * 0.18))],
-            [float(default_x1), float(default_y1 - int(height * 0.28))],
-            [float(default_x2 + 10), float(default_y2 - int(height * 0.28))],
-            [float(default_x2), float(default_y2 - int(height * 0.18))],
+            [float(default_x1 - span_x1), float(top_y1 + 8)],
+            [float(default_x2 - span_x2), float(top_y2 + 6)],
+            [float(default_x2 + span_x2), float(top_y2 - 8)],
+            [float(default_x1 + span_x1), float(top_y1 - 10)],
         ]
         shadow_pts = [
-            [float(p1[0] - span_x1), float(p1[1])],
-            [float(p2[0] - span_x2), float(p2[1])],
-            [float(p2[0] + span_x2), float(p2[1])],
-            [float(p1[0] + span_x1), float(p1[1])],
+            [float(default_x1 - span_x1), float(default_y1)],
+            [float(default_x2 - span_x2), float(default_y2)],
+            [float(default_x2 + span_x2), float(default_y2)],
+            [float(default_x1 + span_x1), float(default_y1)],
         ]
         return {
             "target_zone": target_zone or "sidewalk",
@@ -498,6 +518,8 @@ def populate_intervention_explicit_geometry(
         _set_attr(intervention, "intended_shade_coverage", layout["intended_shade_coverage"])
         _set_attr(intervention, "relative_depth", layout["relative_depth"])
         _set_attr(intervention, "scale", layout["scale"])
+        _set_attr(intervention, "side", layout["side"])
+        _set_attr(intervention, "depth", layout["depth"])
         _set_attr(intervention, "target_zone", layout["target_zone"])
 
     elif itype == "shade_structure":

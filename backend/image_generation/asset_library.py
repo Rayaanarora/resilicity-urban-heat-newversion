@@ -23,7 +23,39 @@ ASSET_DIR = Path(__file__).resolve().parent.parent / "data" / "assets"
 ASSET_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def get_tree_asset(variant: str = "mature", scale: float = 1.0, target_height: Optional[int] = None, flip_h: bool = False) -> Image.Image:
+def apply_urban_street_clearance(base_img: Image.Image) -> Image.Image:
+    """Elevate street tree understory clearance seamlessly so canopy arches overhead above pedestrians."""
+    arr = np.array(base_img)
+    alpha = arr[:, :, 3]
+    y_idxs, _ = np.where(alpha > 30)
+    if y_idxs.size == 0:
+        return base_img
+    y_min, y_max = int(y_idxs.min()), int(y_idxs.max())
+    total_h = y_max - y_min
+
+    bot_y_start = y_min + int(total_h * 0.65)
+    widths = [(y, np.count_nonzero(alpha[y, :] > 30)) for y in range(bot_y_start, y_max + 1)]
+    # straight trunk section without lower root flare
+    trunk_rows = [y for y, w in widths if 25 <= w <= 80]
+    if len(trunk_rows) < 15:
+        return base_img
+
+    t_top = min(trunk_rows) + 5
+    t_bot = max(trunk_rows) - 15
+    if t_bot <= t_top + 10:
+        return base_img
+
+    straight_section = arr[t_top:t_bot, :, :]
+    extra_h = 160
+    resized_straight = cv2.resize(straight_section, (straight_section.shape[1], extra_h), interpolation=cv2.INTER_LINEAR)
+
+    top_part = arr[y_min:t_bot, :, :]
+    bottom_part = arr[t_bot:y_max + 1, :, :]
+    combined = np.vstack([top_part, resized_straight, bottom_part])
+    return Image.fromarray(combined)
+
+
+def get_tree_asset(variant: str = "mature", scale: float = 1.0, target_height: Optional[int] = None, flip_h: bool = False, urban_clearance: bool = True) -> Image.Image:
     """Retrieve authentic photographic/AI tree RGBA cutout scaled for perspective.
     
     Strictly avoids synthetic PIL circles, striped trunks, and procedural canopy blobs.
@@ -56,18 +88,24 @@ def get_tree_asset(variant: str = "mature", scale: float = 1.0, target_height: O
             f"Procedural/vector cartoon tree generation is strictly prohibited by system policy."
         )
 
+    if urban_clearance:
+        try:
+            base_img = apply_urban_street_clearance(base_img)
+        except Exception as e:
+            logger.debug("Failed applying urban clearance to tree asset: %s", e)
+
     if flip_h:
         base_img = base_img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
 
-    w, h = base_img.size
-    aspect = w / float(max(1, h))
     if target_height is not None and target_height > 0:
         new_h = max(24, int(round(target_height)))
-        new_w = max(16, int(round(new_h * aspect)))
+        # Upright urban street tree profile: ~0.66 aspect ratio
+        new_w = max(16, int(round(new_h * 0.66)))
     else:
-        new_w = max(16, int(round(w * scale)))
-        new_h = max(24, int(round(h * scale)))
+        new_h = max(24, int(round(base_img.height * scale)))
+        new_w = max(16, int(round(new_h * 0.66)))
     return base_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
 
 
 def get_tree_pit_asset(radius_x: int, radius_y: int) -> Image.Image:

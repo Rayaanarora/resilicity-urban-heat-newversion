@@ -183,34 +183,59 @@ def _draw_directional_ground_shadow(
     ground_mask: np.ndarray,
 ) -> None:
     x, y = int(anchor["x"]), int(anchor["y"])
-    r = int(anchor.get("canopy_radius", 36))
+    r = int(anchor.get("canopy_radius", 40))
     scale = float(anchor.get("scale", 0.7))
+    h, w = shadow_layer.shape[:2]
+
+    # 1. Ground contact occlusion shadow directly beneath the trunk base
+    contact_rw = max(10, int(anchor.get("trunk_width", 10) * 1.8))
+    contact_rh = max(4, int(contact_rw * 0.36))
+    cv2.ellipse(
+        shadow_layer,
+        (x, y),
+        (contact_rw, contact_rh),
+        0, 0, 360,
+        0.58,
+        -1,
+    )
+
+    # 2. Directional canopy cast shadow based on solar proxy
     if sun_direction == "illuminating_from_right":
-        dx, dy = -0.75, 0.34
+        dx, dy = -0.65, 0.35
     elif sun_direction == "illuminating_from_left":
-        dx, dy = 0.75, 0.34
+        dx, dy = 0.65, 0.35
     else:
-        dx, dy = 0.25, 0.40
-    cx = int(x + dx * r * 0.82)
-    cy = int(y + dy * r * 0.48)
+        # Overhead solar insolation: high sun angle casting forward-right shadow
+        dx, dy = 0.20, 0.38
+
+    cx = int(x + dx * r * 0.85)
+    cy = int(y + dy * r * 0.45)
+    rx_proj = max(16, int(r * 1.05))
+    ry_proj = max(8, int(r * 0.35))
+    angle = float(np.degrees(np.arctan2(dy, dx)))
+
+    # Main canopy shadow footprint
     cv2.ellipse(
         shadow_layer,
         (cx, cy),
-        (max(10, int(r * 0.95)), max(5, int(r * 0.28))),
-        float(np.degrees(np.arctan2(dy, dx))),
-        0,
-        360,
-        float(0.28 + 0.12 * scale),
+        (rx_proj, ry_proj),
+        angle,
+        0, 360,
+        float(0.36 + 0.10 * scale),
         -1,
     )
+
+    # Restrict strictly to ground plane (sidewalk & road)
     shadow_layer[~ground_mask] = 0.0
 
 
 def _apply_shadow_layer(image: Image.Image, shadow_layer: np.ndarray) -> Image.Image:
-    shadow_layer = cv2.GaussianBlur(shadow_layer, (21, 21), 0)
+    # Soft organic blur for atmospheric light dispersion
+    blurred_shadow = cv2.GaussianBlur(shadow_layer, (19, 19), 0)
     arr = np.array(image.convert("RGB")).astype(np.float32)
-    factor = 1.0 - np.clip(shadow_layer, 0.0, 0.42)[..., None]
+    factor = 1.0 - np.clip(blurred_shadow, 0.0, 0.46)[..., None]
     return Image.fromarray(np.clip(arr * factor, 0, 255).astype(np.uint8))
+
 
 
 from .asset_library import get_tree_asset
@@ -329,24 +354,35 @@ def composite_geometric_draft(
         anchors_sorted = sorted(anchors, key=lambda a: a.get("y", 0))
         for idx, anc in enumerate(anchors_sorted):
             scale = float(anc.get("scale", 0.65))
-            target_h = max(56, int(anc.get("tree_height") or h * 0.27 * scale))
-            variant = "mature" if idx % 2 == 0 else "young"
+            target_h = max(72, int(anc.get("tree_height") or h * 0.45 * scale))
+            if scale > 0.72:
+                variant = "mature" if idx % 2 == 0 else "medium"
+            elif scale > 0.52:
+                variant = "medium" if idx % 2 == 0 else "young"
+            else:
+                variant = "young" if idx % 2 == 0 else "distant"
+
             asset = get_tree_asset(variant=variant, target_height=target_h, flip_h=(idx % 2 == 1))
 
             x, y = int(anc["x"]), int(anc["y"])
+
+            # Paste authentic photographic tree asset with grounded trunk base
             paste_x = x - asset.width // 2
-            paste_y = y - asset.height + 3
+            paste_y = y - asset.height + 2
             current_img = _paste_rgba_with_mask(current_img.convert("RGBA"), asset, paste_x, paste_y, tree_mask_arr).convert("RGB")
             _draw_directional_ground_shadow(shadow, anc, sun_direction, ground_mask)
-            logger.info("Placed authentic photographic tree draft at anchor=(%d,%d) scale=%.3f depth=%.3f", x, y, scale, float(anc.get("relative_depth", 0.0)))
+            logger.info("Placed authentic photographic tree draft (%s) at anchor=(%d,%d) scale=%.3f height=%d", variant, x, y, scale, target_h)
 
         if np.count_nonzero(shadow) > 0:
             current_img = _apply_shadow_layer(current_img, shadow)
 
     if np.count_nonzero(tree_mask_arr) > 0:
-        tree_mask_arr[protected_mask] = 0
-        inpaint_mask_arr |= tree_mask_arr
-        individual_masks["tree_canopy"] = Image.fromarray(tree_mask_arr, mode="L")
+        dilated_tree = cv2.dilate(tree_mask_arr, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
+        if protected_mask is not None:
+            dilated_tree[protected_mask] = 0
+            tree_mask_arr[protected_mask] = 0
+        inpaint_mask_arr |= dilated_tree
+        individual_masks["tree_canopy"] = Image.fromarray(dilated_tree, mode="L")
         draft_layers["tree_draft"] = current_img.copy()
 
     # Shade structure drafts: architectural tensile sails with sidewalk steel posts
@@ -362,9 +398,14 @@ def composite_geometric_draft(
             logger.info("Composited shade draft: supports=%d coverage_pct=%.2f", len(supports), np.count_nonzero(m) / max(1, w * h) * 100.0)
 
     if np.count_nonzero(shade_mask_arr) > 0:
-        inpaint_mask_arr |= shade_mask_arr
-        individual_masks["shade_structure"] = Image.fromarray(shade_mask_arr, mode="L")
+        dilated_shade = cv2.dilate(shade_mask_arr, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9)))
+        if protected_mask is not None:
+            dilated_shade[protected_mask] = 0
+            shade_mask_arr[protected_mask] = 0
+        inpaint_mask_arr |= dilated_shade
+        individual_masks["shade_structure"] = Image.fromarray(dilated_shade, mode="L")
         draft_layers["shade_draft"] = current_img.copy()
+
 
     # Final protection pass on geometric composite
     if protected_mask is not None and np.count_nonzero(protected_mask) > 0:

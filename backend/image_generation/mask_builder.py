@@ -465,3 +465,86 @@ def build_inpainting_mask(
     }
 
     return combined_img, metadata
+
+
+def build_mask_from_intervention_geometry(
+    intervention: Any,
+    width: int,
+    height: int,
+    depth_map: Optional[np.ndarray] = None,
+    protected_mask: Optional[np.ndarray] = None,
+) -> Image.Image:
+    """Build contextual intervention mask directly from explicit planner geometry.
+
+    Fulfills Requirements 8, 9, 10, 11, 12:
+    - Mask is not a tight cutout silhouette; it provides generous contextual area for:
+      - Ground contact & porous pit
+      - Trunk & branch emergence
+      - Foliage & canopy spread
+      - Cast shadows on pavement
+    - Shade structures include support corridors and canopy span.
+    - Strictly subtracts protected objects (vehicles, pedestrians, poles).
+    """
+    itype = getattr(intervention, "type", "")
+    mask_arr = np.zeros((height, width), dtype=np.uint8)
+
+    if itype == "tree_canopy":
+        anchors = getattr(intervention, "anchors", []) or []
+        for anc in anchors:
+            x = int(round(anc.get("x", width * 0.5)))
+            y = int(round(anc.get("y", height * 0.7)))
+            r = int(round(anc.get("canopy_radius", 45)))
+            cy = int(round(anc.get("canopy_center_y", y - int(r * 1.15))))
+            scale = float(anc.get("scale", 0.6))
+
+            # 1. Ground contact / porous tree basin
+            pit_rx = max(18, int(r * 0.45))
+            pit_ry = max(9, int(pit_rx * 0.45))
+            cv2.ellipse(mask_arr, (x, y), (pit_rx, pit_ry), 0, 0, 360, 255, -1)
+
+            # 2. Trunk corridor connecting ground to canopy
+            trunk_w = max(14, int(r * 0.28))
+            cv2.rectangle(mask_arr, (x - trunk_w // 2, cy), (x + trunk_w // 2, y + 5), 255, -1)
+
+            # 3. Spreading canopy envelope with organic margins
+            canopy_rx = int(r * 1.35)
+            canopy_ry = int(r * 1.15)
+            cv2.ellipse(mask_arr, (x, cy), (canopy_rx, canopy_ry), 0, 0, 360, 255, -1)
+
+        corridor = getattr(intervention, "corridor_polyline", []) or []
+        if len(corridor) >= 2:
+            pts = np.array([(int(p[0]), int(p[1])) for p in corridor], dtype=np.int32)
+            cv2.polylines(mask_arr, [pts], False, 255, thickness=20)
+
+        # Smooth and binarize
+        if np.count_nonzero(mask_arr) > 0:
+            mask_arr = cv2.GaussianBlur(mask_arr, (15, 15), 0)
+            mask_arr = np.where(mask_arr > 35, 255, 0).astype(np.uint8)
+
+    elif itype == "shade_structure":
+        footprint = getattr(intervention, "footprint_polygon", []) or []
+        if len(footprint) >= 3:
+            pts = np.array([(int(p[0]), int(p[1])) for p in footprint], dtype=np.int32)
+            cv2.fillPoly(mask_arr, [pts], 255)
+
+        supports = getattr(intervention, "support_points", []) or []
+        for sp in supports:
+            sx, sy = int(round(sp[0])), int(round(sp[1]))
+            cv2.circle(mask_arr, (sx, sy), 22, 255, -1)
+
+        if np.count_nonzero(mask_arr) > 0:
+            # Contextual dilation for structural frame, cables, and ground shadow
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (35, 35))
+            mask_arr = cv2.dilate(mask_arr, kernel)
+
+    elif itype in ("cool_pavement", "permeable_pave"):
+        quad = getattr(intervention, "surface_quad", []) or []
+        if len(quad) >= 4:
+            pts = np.array([(int(p[0]), int(p[1])) for p in quad], dtype=np.int32)
+            cv2.fillPoly(mask_arr, [pts], 255)
+
+    # Strictly protect people, vehicles, signs, and poles
+    if protected_mask is not None and np.count_nonzero(mask_arr) > 0:
+        mask_arr[protected_mask] = 0
+
+    return Image.fromarray(mask_arr, mode="L")

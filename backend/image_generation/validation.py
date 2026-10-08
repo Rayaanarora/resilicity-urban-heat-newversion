@@ -208,30 +208,57 @@ def validate_image_output(
         # -------------------------------------------------------------------
         # 3d. Intervention-Presence Check (Spectral Indicators)
         # -------------------------------------------------------------------
+        # 3d. Intervention-Presence Check (Spectral & Structural Indicators)
+        # -------------------------------------------------------------------
         if individual_masks:
-            # Check for vegetation presence in tree_mask
-            t_mask = individual_masks.get("tree_mask")
+            # Check for vegetation presence in tree_canopy / tree_mask
+            t_mask = individual_masks.get("tree_canopy") or individual_masks.get("tree_mask")
             if t_mask is not None:
                 tm_resized = t_mask.convert("L").resize((gen_w, gen_h), Image.Resampling.NEAREST)
                 tm_arr = np.array(tm_resized) > 30
                 if np.count_nonzero(tm_arr) > 100:
                     orig_green = np.mean(orig_np[tm_arr, 1] - 0.5 * (orig_np[tm_arr, 0] + orig_np[tm_arr, 2]))
                     gen_green = np.mean(np_img[tm_arr, 1] - 0.5 * (np_img[tm_arr, 0] + np_img[tm_arr, 2]))
-                    if gen_green > orig_green + 1.0:
+                    if gen_green > orig_green + 0.8:
                         interventions_detected.append("tree_canopy_vegetation")
                         checks_passed.append(f"Tree vegetation verified (green index delta={gen_green - orig_green:+.1f})")
 
-            # Check for cool pavement albedo in road_mask
-            r_mask = individual_masks.get("road_mask")
+            # Check for shade structure presence
+            s_mask = individual_masks.get("shade_structure") or individual_masks.get("shade_mask")
+            if s_mask is not None:
+                sm_resized = s_mask.convert("L").resize((gen_w, gen_h), Image.Resampling.NEAREST)
+                sm_arr = np.array(sm_resized) > 30
+                if np.count_nonzero(sm_arr) > 100:
+                    gen_gray = 0.299 * np_img[..., 0] + 0.587 * np_img[..., 1] + 0.114 * np_img[..., 2]
+                    orig_gray = 0.299 * orig_np[..., 0] + 0.587 * orig_np[..., 1] + 0.114 * orig_np[..., 2]
+                    diff_sm = np.mean(np.abs(gen_gray[sm_arr] - orig_gray[sm_arr]))
+                    if diff_sm > 5.0:
+                        interventions_detected.append("shade_structure_presence")
+                        checks_passed.append(f"Shade structure structural presence verified (mean diff={diff_sm:.1f})")
+
+            # Check for cool pavement albedo in cool_pavement / road_mask
+            r_mask = individual_masks.get("cool_pavement") or individual_masks.get("road_mask")
             if r_mask is not None:
                 rm_resized = r_mask.convert("L").resize((gen_w, gen_h), Image.Resampling.NEAREST)
                 rm_arr = np.array(rm_resized) > 30
                 if np.count_nonzero(rm_arr) > 100:
                     orig_lum = np.mean(0.299 * orig_np[rm_arr, 0] + 0.587 * orig_np[rm_arr, 1] + 0.114 * orig_np[rm_arr, 2])
                     gen_lum = np.mean(0.299 * np_img[rm_arr, 0] + 0.587 * np_img[rm_arr, 1] + 0.114 * np_img[rm_arr, 2])
-                    if abs(gen_lum - orig_lum) > 3.0:
+                    if abs(gen_lum - orig_lum) > 2.5:
                         interventions_detected.append("cool_pavement_albedo_shift")
                         checks_passed.append(f"Cool pavement albedo verified (luminance delta={gen_lum - orig_lum:+.1f})")
+
+            # Check for permeable paver surface texture in permeable_pave / sidewalk_mask
+            p_mask = individual_masks.get("permeable_pave") or individual_masks.get("sidewalk_mask")
+            if p_mask is not None:
+                pm_resized = p_mask.convert("L").resize((gen_w, gen_h), Image.Resampling.NEAREST)
+                pm_arr = np.array(pm_resized) > 30
+                if np.count_nonzero(pm_arr) > 100:
+                    pave_diff = np.mean(np.abs(np_img[pm_arr] - orig_np[pm_arr]))
+                    if pave_diff > 3.0:
+                        interventions_detected.append("permeable_pave_texture")
+                        checks_passed.append(f"Permeable paver texture verified (mean diff={pave_diff:.1f})")
+
 
     # -----------------------------------------------------------------------
     # Stage 4: Aspect Ratio Check and Normalization

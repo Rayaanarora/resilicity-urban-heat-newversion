@@ -105,6 +105,8 @@ class SpatialInterventionSpec(BaseModel):
     extent: Optional[List[int]] = Field(default=None, description="Bounding extent of surface intervention [x1, y1, x2, y2]")
     material_type: Optional[str] = Field(default=None, description="Surface material texture specification")
     treatment_type: Optional[str] = Field(default=None, description="Surface treatment or coating specification")
+    side: Optional[str] = Field(default=None, description="Sidewalk orientation: left or right")
+    depth: Optional[float] = Field(default=None, description="Perspective scene depth proxy")
     geometry_metadata: Optional[Dict[str, Any]] = Field(default=None, description="Auxiliary geometric layout attributes")
 
 

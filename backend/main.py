@@ -41,6 +41,7 @@ if env_path.exists():
 
 from image_generation import (
     GeminiImageEditingProvider,
+    LocalSD15ControlNetInpaintingProvider,
     LocalSD15InpaintingProvider,
     LocalSDXLInpaintingProvider,
     build_inpainting_mask,
@@ -70,15 +71,20 @@ from planner import (
 from scene_understanding import analyze_scene, render_heat_priority_colormap
 from segmentation import SegFormerEngine
 
-IMAGE_PROVIDER = os.environ.get("IMAGE_PROVIDER", "local_sd15").strip().lower()
-if IMAGE_PROVIDER == "local_sdxl":
-    IMAGE_PROVIDER = "local_sd15"
+IMAGE_PROVIDER = os.environ.get("IMAGE_PROVIDER", "local_sd15_controlnet").strip().lower()
+if IMAGE_PROVIDER in ("local_sdxl", "local_sd15"):
+    IMAGE_PROVIDER = "local_sd15_controlnet"
 
 inpainter = ResilientInpainter()
 
-# Lazy provider construction: only instantiate SD 1.5 if local_sd15 is active; never require Gemini API key
-sd15_provider = LocalSD15InpaintingProvider.get_instance() if IMAGE_PROVIDER in ("local_sd15", "local_sdxl") else None
-sdxl_provider = sd15_provider
+# Lazy provider construction: instantiate LocalSD15ControlNetInpaintingProvider on CUDA (zero Gemini/cloud fallback)
+sd_controlnet_provider = (
+    LocalSD15ControlNetInpaintingProvider.get_instance()
+    if IMAGE_PROVIDER in ("local_sd15_controlnet", "local_sd15", "local_sdxl")
+    else None
+)
+sd15_provider = sd_controlnet_provider
+sdxl_provider = sd_controlnet_provider
 _gemini_provider: Optional[GeminiImageEditingProvider] = None
 
 
@@ -342,8 +348,8 @@ async def analyze_and_redesign(
     normalized_img = None
     model_name = "stable-diffusion-v1-5/stable-diffusion-inpainting"
 
-    if IMAGE_PROVIDER in ("local_sd15", "local_sdxl"):
-        active_sd = sd15_provider or sdxl_provider or LocalSD15InpaintingProvider.get_instance()
+    if IMAGE_PROVIDER in ("local_sd15_controlnet", "local_sd15", "local_sdxl"):
+        active_sd = sd_controlnet_provider or LocalSD15ControlNetInpaintingProvider.get_instance()
 
         try:
             logger.info("Starting local redesign generation attempt 1 on %s", active_sd.gpu_name)
