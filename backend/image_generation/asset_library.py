@@ -38,33 +38,23 @@ def get_tree_asset(variant: str = "mature", scale: float = 1.0, target_height: O
             logger.warning("Error opening cached tree asset %s: %s", cache_path, e)
 
     if base_img is None:
-        # Fallback to inpainting assets or bundled photographic samples
-        alt_paths = [
-            Path(__file__).resolve().parent.parent / "inpainting" / "assets" / ("tree_2.png" if variant == "mature" else "tree_1.png"),
-            Path(__file__).resolve().parents[2] / "gen-ai" / "public" / "samples" / "urban_street_after.png",
-        ]
-        for alt in alt_paths:
-            if alt.exists():
+        # Search for any available real photographic tree variants in local asset library
+        fallback_variants = ["mature", "medium", "young", "distant"]
+        for fv in fallback_variants:
+            alt_path = ASSET_DIR / f"tree_{fv}.png"
+            if alt_path.exists():
                 try:
-                    alt_img = Image.open(alt).convert("RGBA")
-                    if alt_img.width > 200 and alt_img.height > 200:
-                        base_img = alt_img
-                        break
+                    base_img = Image.open(alt_path).convert("RGBA")
+                    logger.info("Using alternative photographic tree asset: %s", alt_path.name)
+                    break
                 except Exception:
                     continue
 
     if base_img is None:
-        # Construct a fallback photographic silhouette with natural alpha gradient
-        logger.warning("No photographic tree asset found on disk; generating fallback realistic RGBA silhouette.")
-        base_img = Image.new("RGBA", (512, 640), (0, 0, 0, 0))
-        # Draw smooth organic natural foliage
-        arr = np.zeros((640, 512, 4), dtype=np.uint8)
-        # Foliage cluster: deep forest green
-        cv2.circle(arr, (256, 260), 180, (38, 92, 42, 250), -1)
-        arr[:, :, 3] = cv2.GaussianBlur(arr[:, :, 3], (25, 25), 0)
-        # Trunk
-        cv2.rectangle(arr, (244, 380), (268, 630), (60, 48, 38, 255), -1)
-        base_img = Image.fromarray(arr, mode="RGBA")
+        raise FileNotFoundError(
+            f"Required photographic tree cutout asset not found in {ASSET_DIR}. "
+            f"Procedural/vector cartoon tree generation is strictly prohibited by system policy."
+        )
 
     if flip_h:
         base_img = base_img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)

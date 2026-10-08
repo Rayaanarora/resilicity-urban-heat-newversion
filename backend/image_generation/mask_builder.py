@@ -173,11 +173,9 @@ def build_geometrically_grounded_tree_mask(
             0, 0, 360, 255, -1,
         )
 
-    # Strictly keep canopies off building facades and walls
-    if facade_mask is not None:
-        mask_arr[facade_mask] = 0
-
-    # Subtract protected objects (vehicles, pedestrians, infrastructure)
+    # Part 8: Allow natural canopy overlap with building facades and sky.
+    # Real street trees naturally overlap upper walls and building edges in perspective.
+    # Only subtract strictly protected objects (vehicles, pedestrians, signs, poles, infrastructure).
     if protected_mask is not None:
         mask_arr[protected_mask] = 0
 

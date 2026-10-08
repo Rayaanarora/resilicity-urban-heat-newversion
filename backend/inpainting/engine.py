@@ -1,13 +1,9 @@
-"""Stage 4: Resilient Urban Inpainting Engine.
+"""Stage 4 (DEPRECATED): Legacy Procedural Inpainting Engine.
 
-Generates realistic photo-level before/after cooling transformations strictly bounded
-by segmentation masks and urban resilience interventions:
-- Tree Canopy Expansion: lush organic foliage crowns along curbs/sidewalks + dappled ground cast shadows + planter basins.
-- Cool Pavement: high-albedo solar-reflective light-gray road sealcoat preserving lane markings and surface texture.
-- Permeable Pavement: interlocking modular stone/concrete paver blocks with joint lines.
-- Cool Roof: high-reflectance titanium-white / off-white cooling roof coating.
-- Green Roof: vegetative sedum succulent mat with multi-hue organic micro-foliage.
-- Shade Structures: modern tensile fabric canopies with crisp angled ground shadows.
+NOTE: This is a legacy procedural engine preserved for backwards-compatibility test cases.
+The primary production autonomous urban redesign pipeline is located in
+`backend/image_generation/multi_pass.py` and served via `/api/v1/analyze-and-redesign`.
+Do NOT use this legacy procedural path for primary user uploads.
 """
 
 import base64

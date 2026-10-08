@@ -356,14 +356,16 @@ def evaluate_interactions(
     if candidate_type == "shade_structure" and "tree_canopy" in chosen_types:
         for c in chosen:
             if c["type"] == "tree_canopy" and c["target_zone"] == target_zone:
-                delta_utility -= 0.35
+                delta_utility -= 0.60
                 conflicts.append(f"Redundancy: Shade canopy overlaps with proposed tree canopy corridor in {target_zone.replace('_', ' ')}.")
+                is_rejected = True
 
     if candidate_type == "tree_canopy" and "shade_structure" in chosen_types:
         for c in chosen:
             if c["type"] == "shade_structure" and c["target_zone"] == target_zone:
-                delta_utility -= 0.35
+                delta_utility -= 0.60
                 conflicts.append(f"Redundancy: Tree canopy duplicates overhead shade in {target_zone.replace('_', ' ')} already addressed by tensile canopy.")
+                is_rejected = True
 
     # Diminishing returns: Second tree canopy in opposite sidewalk
     if candidate_type == "tree_canopy" and "tree_canopy" in chosen_types:

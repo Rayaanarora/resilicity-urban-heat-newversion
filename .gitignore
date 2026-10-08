@@ -50,7 +50,7 @@ yarn-error.log*
 # Large model checkpoints / dataset folders
 segformer-local-final/
 segformer-checkpoints/
-data/
+/data/
 
 # OS and Editors
 .DS_Store
@@ -61,7 +61,9 @@ data/
 
 # Generated test artifacts
 backend/*test_output*.png
-backend/data/
+backend/data/debug/
+backend/data/images/
+backend/data/masks/
 debug_*.png
 
 # Environment variables & secrets (CRITICAL: never commit credentials)

@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 
-from .sdxl_provider import LocalSDXLInpaintingProvider
+from .sd15_inpaint_provider import LocalSD15InpaintingProvider, LocalSDXLInpaintingProvider
 
 logger = logging.getLogger("resilicity.harmonization")
 
@@ -98,7 +98,7 @@ async def harmonize_intervention_crop(
     composite_image: Image.Image,
     intervention_mask: Image.Image,
     intervention_type: str,
-    sd_provider: LocalSDXLInpaintingProvider,
+    sd_provider: Any,
     base_seed: int = 42,
     save_debug_crops: bool = True,
     debug_dir: Optional[Path] = None,
@@ -107,11 +107,13 @@ async def harmonize_intervention_crop(
 
     Requirements 6, 7, 8:
     - Crops around intervention with contextual padding.
-    - Uses moderate strength (0.52 - 0.62) to fuse textures and illumination without altering geometry.
+    - Uses moderate strength (0.50 - 0.65) to fuse textures and illumination without altering geometry.
     - Prompts model to photorealistically refine the already placed elements.
     """
+    t_start = time.time()
     w, h = composite_image.size
     cropped_img, cropped_mask, bbox = extract_contextual_crop(composite_image, intervention_mask, padding=56)
+    mask_cov_pct = round(float(np.count_nonzero(np.array(cropped_mask) > 20) / max(1, cropped_mask.width * cropped_mask.height) * 100.0), 2)
 
     # Targeted harmonization prompts (Requirement 8)
     if intervention_type == "tree_canopy":
@@ -161,12 +163,16 @@ async def harmonize_intervention_crop(
         strength = 0.50
         steps = 18
 
-    # Save pre-crop debug artifact
+    # Save pre-crop debug artifact (Part 32)
     if save_debug_crops and debug_dir:
         debug_dir.mkdir(parents=True, exist_ok=True)
         cropped_img.save(debug_dir / f"{intervention_type}_crop_before.png")
         if intervention_type == "tree_canopy":
+            cropped_img.save(debug_dir / "09_tree_crop_input.png")
+            cropped_mask.save(debug_dir / "10_tree_crop_mask.png")
             cropped_img.save(debug_dir / "tree_diffusion_input.png")
+        elif intervention_type == "shade_structure":
+            cropped_img.save(debug_dir / "14_shade_crop_input.png")
 
     # Run inpainting on the crop
     gen_crop, err = await sd_provider.edit(
@@ -180,17 +186,30 @@ async def harmonize_intervention_crop(
         steps=steps,
         max_retries=1,
     )
+    t_elapsed = round(time.time() - t_start, 2)
 
     if gen_crop is None:
         logger.warning("Harmonization failed for %s (%s). Retaining draft composite patch.", intervention_type, err)
-        return composite_image, {"status": "retained_draft", "error": err}
+        return composite_image, {
+            "status": "retained_draft",
+            "error": err,
+            "crop_bbox": list(bbox),
+            "mask_coverage": mask_cov_pct,
+            "seed": base_seed,
+            "steps": steps,
+            "strength": strength,
+            "guidance": 7.5,
+            "execution_time": t_elapsed,
+        }
 
-    # Save post-crop debug artifact
+    # Save post-crop debug artifact (Part 32)
     if save_debug_crops and debug_dir:
         gen_crop.save(debug_dir / f"{intervention_type}_crop_after.png")
         if intervention_type == "tree_canopy":
+            gen_crop.save(debug_dir / "11_tree_crop_output.png")
             gen_crop.save(debug_dir / "tree_diffusion_output.png")
         elif intervention_type == "shade_structure":
+            gen_crop.save(debug_dir / "15_shade_crop_output.png")
             gen_crop.save(debug_dir / "shade_output.png")
 
     # Feather-blend harmonized crop back into full image canvas
@@ -204,9 +223,13 @@ async def harmonize_intervention_crop(
 
     meta = {
         "status": "harmonized",
-        "bbox": bbox,
+        "crop_bbox": list(bbox),
+        "mask_coverage": mask_cov_pct,
         "strength": strength,
         "steps": steps,
+        "guidance": 7.5,
         "seed": base_seed,
+        "execution_time": t_elapsed,
+        "error": None,
     }
     return blended_full, meta

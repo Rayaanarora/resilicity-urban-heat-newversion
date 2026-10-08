@@ -325,9 +325,11 @@ def composite_geometric_draft(
         all_anchors.extend(anchors)
 
         shadow = np.zeros((h, w), dtype=np.float32)
-        for idx, anc in enumerate(anchors):
+        # Painter's Algorithm: render from background (lowest y) to foreground (highest y)
+        anchors_sorted = sorted(anchors, key=lambda a: a.get("y", 0))
+        for idx, anc in enumerate(anchors_sorted):
             scale = float(anc.get("scale", 0.65))
-            target_h = max(56, int(anc.get("tree_height") or h * 0.36 * scale))
+            target_h = max(56, int(anc.get("tree_height") or h * 0.27 * scale))
             variant = "mature" if idx % 2 == 0 else "young"
             asset = get_tree_asset(variant=variant, target_height=target_h, flip_h=(idx % 2 == 1))
 

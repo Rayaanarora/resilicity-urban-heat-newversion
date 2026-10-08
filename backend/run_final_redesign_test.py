@@ -15,6 +15,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger("resilicity.final_test")
 
 from image_generation import (
+    LocalSD15InpaintingProvider,
     LocalSDXLInpaintingProvider,
     run_autonomous_multi_pass_redesign,
     validate_image_output,
@@ -68,8 +69,8 @@ async def main():
 
     # 4. Local SD 1.5 Inpainting Engine
     logger.info("Initializing Local SD 1.5 Inpainting Engine on CUDA...")
-    sdxl = LocalSDXLInpaintingProvider.get_instance()
-    status = sdxl.get_status()
+    sd15 = LocalSD15InpaintingProvider.get_instance()
+    status = sd15.get_status()
     logger.info("Generator status: GPU=%s, VRAM=%.2f GB, Model=%s", status["gpu_name"], status["vram_gb"], status["model_path"])
 
     # 5. Run Complete 5-Stage Urban Redesign Pipeline
@@ -78,7 +79,7 @@ async def main():
         image=pil_img,
         plan=plan,
         seg_result=seg_res,
-        sdxl=sdxl,
+        sdxl=sd15,
         scene_understanding=scene,
         quality_tier="fast",
         save_debug=True,
@@ -86,45 +87,53 @@ async def main():
         base_seed=42,
     )
 
-    # 6. Ensure all required artifacts exist
+    # 6. Ensure all Part 32 debug artifacts exist
     req_artifacts = [
-        "original.png",
-        "layout_plan.json",
-        "tree_layout.png",
-        "tree_draft.png",
-        "tree_diffusion_input.png",
-        "tree_diffusion_output.png",
-        "shade_draft.png",
-        "shade_output.png",
-        "road_draft.png",
-        "final_redesign.png",
+        "00_original.png",
+        "01_segmentation.png",
+        "02_depth.png",
+        "03_spatial_heat_priority.png",
+        "04_protected_objects.png",
+        "05_scene_layout.png",
+        "06_layout_plan.json",
+        "07_tree_layout.png",
+        "08_tree_draft.png",
+        "09_tree_crop_input.png",
+        "10_tree_crop_mask.png",
+        "11_tree_crop_output.png",
+        "12_shade_layout.png",
+        "13_shade_draft.png",
+        "14_shade_crop_input.png",
+        "15_shade_crop_output.png",
+        "16_road_draft.png",
+        "17_sidewalk_draft.png",
+        "18_harmonized_scene.png",
+        "19_protected_recomposite.png",
+        "20_final_redesign.png",
         "validation.json",
+        "generation_trace.json",
     ]
 
-    # Save any fallback files if an intervention was omitted by the planner
-    if not (DEBUG_DIR / "shade_draft.png").exists() and (DEBUG_DIR / "draft_composite.png").exists():
-        import shutil
-        shutil.copy(DEBUG_DIR / "draft_composite.png", DEBUG_DIR / "shade_draft.png")
-    if not (DEBUG_DIR / "shade_output.png").exists() and (DEBUG_DIR / "final_redesign.png").exists():
-        import shutil
-        shutil.copy(DEBUG_DIR / "final_redesign.png", DEBUG_DIR / "shade_output.png")
-
     logger.info("=" * 60)
-    logger.info("ARTIFACT VERIFICATION:")
+    logger.info("PART 32 DEBUG ARTIFACT SUITE VERIFICATION:")
+    all_present = True
     for art in req_artifacts:
         p = DEBUG_DIR / art
         exists = p.exists()
+        if not exists:
+            all_present = False
         size_kb = (p.stat().st_size / 1024) if exists else 0
         logger.info("  %s: %s (%.1f KB)", art, "EXISTS" if exists else "MISSING", size_kb)
     logger.info("=" * 60)
 
     logger.info(
-        "PIPELINE COMPLETED in %.2fs: is_valid=%s, diff_mean=%.2f, masked_diff=%.2f, pct_changed=%.1f%%",
+        "PIPELINE COMPLETED in %.2fs: is_valid=%s, diff_mean=%.2f, masked_diff=%.2f, pct_changed=%.1f%%, all_artifacts=%s",
         time.time() - t0,
         report.is_valid if report else False,
         report.diff_mean if report and report.diff_mean else 0.0,
         report.masked_diff if report and report.masked_diff else 0.0,
         report.pct_changed if report and report.pct_changed else 0.0,
+        all_present,
     )
 
 

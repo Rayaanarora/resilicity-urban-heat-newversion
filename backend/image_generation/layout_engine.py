@@ -99,12 +99,16 @@ def compute_tree_row_layout(
     curbside_mask = active_sw & (dilated_road > 0)
     has_curbside = np.count_nonzero(curbside_mask) > 50
 
-    # Exponential sampling from foreground (near camera, high y) to background (near horizon, lower y)
-    t_vals = np.linspace(0.18, 0.85, max(4, requested_trees + 2))
-    sampled_y_levels = [int(y_max - (t ** 1.65) * (y_max - y_min)) for t in t_vals]
-
-    anchors: List[Dict[str, Any]] = []
+    # Derive complete corridor polyline from near foreground to midground/vanishing point
     corridor_points: List[List[float]] = []
+    y_step = max(3, (y_max - y_min) // 35)
+    for y_cur in range(y_max, y_min - 1, -y_step):
+        if has_curbside and np.any(curbside_mask[y_cur]):
+            row_xs = np.where(curbside_mask[y_cur])[0]
+        else:
+            row_xs = sw_x[sw_y == y_cur]
+        if row_xs.size > 0:
+            corridor_points.append([float(np.median(row_xs)), float(y_cur)])
 
     # Proximity exclusion radius around protected objects (in pixels)
     prot_dist_transform = None
@@ -112,84 +116,121 @@ def compute_tree_row_layout(
         prot_inv = (~protected_mask).astype(np.uint8) * 255
         prot_dist_transform = cv2.distanceTransform(prot_inv, cv2.DIST_L2, 5)
 
-    for y_plant in sampled_y_levels:
-        if has_curbside and np.any(curbside_mask[y_plant]):
-            row_xs = np.where(curbside_mask[y_plant])[0]
-        else:
-            row_xs = sw_x[sw_y == y_plant]
+    # Perspective recession: target progress along sidewalk corridor from near to far
+    n_trees = max(2, requested_trees)
+    t_targets = np.linspace(0.06, 0.76, n_trees)
 
-        if row_xs.size == 0:
-            continue
+    anchors: List[Dict[str, Any]] = []
+    selected_ys: List[int] = []
 
-        # Ground anchor x coordinate: verge center
-        x_plant = int(np.median(row_xs))
-        corridor_points.append([float(x_plant), float(y_plant)])
+    for t_frac in t_targets:
+        target_y = int(y_max - t_frac * (y_max - y_min))
+        best_cand = None
+        best_cand_score = -1e9
 
-        # 1. Reject if too close to protected objects (vehicles, pedestrians, streetlights)
-        if prot_dist_transform is not None:
-            dist_to_prot = prot_dist_transform[y_plant, x_plant]
-            if dist_to_prot < 14.0:  # within 14px of a car/pedestrian/pole
-                logger.debug("Rejected anchor (%d, %d): too close to protected object (dist=%.1f)", x_plant, y_plant, dist_to_prot)
+        search_half_window = max(12, int((y_max - y_min) * 0.12))
+        search_window = range(
+            max(y_min, target_y - search_half_window),
+            min(y_max, target_y + search_half_window + 1),
+            2,
+        )
+
+        for y_cand in search_window:
+            # Enforce minimum vertical separation from previously placed anchors
+            if any(abs(y_cand - prev_y) < int((y_max - y_min) * 0.22) for prev_y in selected_ys):
                 continue
 
-        # 2. Reject if directly in active vehicular roadway
-        if road_mask[y_plant, x_plant]:
-            # Try shifting toward sidewalk interior
-            shifted = False
-            for dx in (-15, 15, -25, 25):
-                cand_x = np.clip(x_plant + dx, 0, width - 1)
-                if active_sw[y_plant, cand_x] and not road_mask[y_plant, cand_x]:
-                    x_plant = int(cand_x)
-                    shifted = True
-                    break
-            if not shifted:
+            if has_curbside and np.any(curbside_mask[y_cand]):
+                row_xs = np.where(curbside_mask[y_cand])[0]
+            else:
+                row_xs = sw_x[sw_y == y_cand]
+            if row_xs.size == 0:
                 continue
 
-        # 3. Relative depth driven scale
-        rel_depth = float(depth_map[y_plant, x_plant])  # 0.0=near, 1.0=far
-        # Perspective scaling factor: near trees 1.0, distant trees down to 0.28
-        scale = float(np.clip(1.0 - 0.72 * rel_depth, 0.28, 1.0))
+            x_cand = int(np.median(row_xs))
 
-        tree_h = int(round(height * 0.38 * scale))
-        canopy_rx = int(round(width * 0.13 * scale))
-        canopy_ry = int(round(tree_h * 0.48))
-        trunk_w = max(4, int(round(width * 0.022 * scale)))
+            # Strictly reject or adjust if in active roadway
+            if road_mask[y_cand, x_cand]:
+                shifted = False
+                for dx in (-15, 15, -25, 25):
+                    cand_x_shift = int(np.clip(x_cand + dx, 0, width - 1))
+                    if active_sw[y_cand, cand_x_shift] and not road_mask[y_cand, cand_x_shift]:
+                        x_cand = cand_x_shift
+                        shifted = True
+                        break
+                if not shifted:
+                    continue
 
-        # Contact base of trunk at ground anchor
-        anchors.append({
-            "x": int(x_plant),
-            "y": int(y_plant),
-            "relative_depth": round(rel_depth, 3),
-            "scale": round(scale, 3),
-            "canopy_radius": int(canopy_rx),
-            "canopy_height": int(canopy_ry),
-            "tree_height": int(tree_h),
-            "trunk_width": int(trunk_w),
-            "canopy_center_y": max(canopy_ry + 10, y_plant - int(tree_h * 0.58)),
-        })
+            # Strictly reject if near protected objects (cars, pedestrians, poles)
+            dist_to_prot = 999.0
+            if prot_dist_transform is not None:
+                dist_to_prot = float(prot_dist_transform[y_cand, x_cand])
+                if dist_to_prot < 16.0:
+                    continue
 
-        if len(anchors) >= requested_trees:
-            break
+            y_dist = abs(y_cand - target_y)
+            score = -y_dist + min(40.0, dist_to_prot) * 0.4
+            if score > best_cand_score:
+                best_cand_score = score
+                best_cand = (x_cand, y_cand)
 
-    # If too few anchors found, create at least 2 geometrically sound anchors along corridor
+        if best_cand is not None:
+            x_plant, y_plant = best_cand
+            selected_ys.append(y_plant)
+
+            rel_depth = float(depth_map[y_plant, x_plant])
+            # Bounded perspective scaling: foreground scale ~0.95, receding to ~0.35
+            scale = float(np.clip(1.0 - 0.68 * rel_depth, 0.32, 0.95))
+
+            # Cap maximum tree dimensions to preserve urban street context
+            tree_h = int(round(height * 0.27 * scale))
+            canopy_rx = int(round(width * 0.085 * scale))
+            canopy_ry = int(round(tree_h * 0.44))
+            trunk_w = max(4, int(round(width * 0.016 * scale)))
+            canopy_cy = max(canopy_ry + 10, y_plant - int(tree_h * 0.58))
+            pit_w = max(12, int(round(trunk_w * 3.5)))
+            pit_d = max(8, int(round(trunk_w * 1.6)))
+            intended_shade = round(float(np.pi * canopy_rx * canopy_ry * 0.45 / (width * height) * 100.0), 2)
+
+            anchors.append({
+                "x": int(x_plant),
+                "y": int(y_plant),
+                "relative_depth": round(rel_depth, 3),
+                "scale": round(scale, 3),
+                "canopy_radius": int(canopy_rx),
+                "canopy_height": int(canopy_ry),
+                "tree_height": int(tree_h),
+                "trunk_width": int(trunk_w),
+                "canopy_center_y": int(canopy_cy),
+                "planting_pit": {"width": pit_w, "depth": pit_d},
+                "intended_shade_coverage": intended_shade,
+            })
+
+    # Fallback to 2 anchors along corridor if dense constraints blocked sampling
     if len(anchors) < 2 and len(corridor_points) >= 2:
         for pt in [corridor_points[0], corridor_points[-1]]:
             px, py = int(pt[0]), int(pt[1])
             d = float(depth_map[py, px]) if depth_map is not None else 0.5
-            s = float(np.clip(1.0 - 0.72 * d, 0.3, 1.0))
+            s = float(np.clip(1.0 - 0.68 * d, 0.32, 0.95))
+            th = int(round(height * 0.27 * s))
+            tw = max(4, int(round(width * 0.016 * s)))
+            rx = int(round(width * 0.085 * s))
+            ry = int(round(th * 0.44))
             anchors.append({
                 "x": px,
                 "y": py,
                 "relative_depth": round(d, 3),
                 "scale": round(s, 3),
-                "canopy_radius": int(width * 0.12 * s),
-                "canopy_height": int(height * 0.18 * s),
-                "tree_height": int(height * 0.35 * s),
-                "trunk_width": max(4, int(width * 0.02 * s)),
-                "canopy_center_y": max(int(height * 0.1), py - int(height * 0.20 * s)),
+                "canopy_radius": rx,
+                "canopy_height": ry,
+                "tree_height": th,
+                "trunk_width": tw,
+                "canopy_center_y": max(int(height * 0.1), py - int(th * 0.58)),
+                "planting_pit": {"width": max(12, int(tw * 3.5)), "depth": max(8, int(tw * 1.6))},
+                "intended_shade_coverage": round(float(np.pi * rx * ry * 0.45 / (width * height) * 100.0), 2),
             })
 
-    # Sort corridor polyline points
+    # Sort corridor polyline points from foreground to background
     corridor_points.sort(key=lambda p: p[1], reverse=True)
 
     spacing_px = 0.0
@@ -218,14 +259,20 @@ def compute_tree_row_layout(
 
         extent = [max(0, ax - rx), max(0, cy - ry), min(width, ax + rx), min(height, cy + ry)]
         planting_points.append({
-            "ground_anchor": [ax, ay],
-            "depth": d,
+            "x": ax,
+            "y": ay,
+            "relative_depth": d,
             "scale": s,
-            "spacing": round(spacing_px, 1),
-            "canopy_extent": extent,
             "canopy_radius": rx,
+            "canopy_height": ry,
             "tree_height": int(anc["tree_height"]),
             "trunk_width": int(anc["trunk_width"]),
+            "planting_pit": anc.get("planting_pit", {}),
+            "intended_shade_coverage": anc.get("intended_shade_coverage", 0.0),
+            "ground_anchor": [ax, ay],
+            "canopy_extent": extent,
+            "depth": d,
+            "spacing": round(spacing_px, 1),
         })
         all_ground_anchors.append([ax, ay])
         all_canopy_extents.append(extent)
@@ -239,17 +286,29 @@ def compute_tree_row_layout(
         max(e[3] for e in all_canopy_extents) if all_canopy_extents else height,
     ]
 
+    mean_depth = round(float(np.mean(depth_values)), 3) if depth_values else 0.5
+    mean_scale = round(float(np.mean(scale_values)), 3) if scale_values else 0.7
+    mean_tree_h = int(np.mean([a["tree_height"] for a in anchors])) if anchors else int(height * 0.3)
+    mean_trunk_w = int(np.mean([a["trunk_width"] for a in anchors])) if anchors else int(width * 0.015)
+    total_intended_shade = round(sum(a.get("intended_shade_coverage", 0.0) for a in anchors), 2)
+
     return {
         "side": side_name,
+        "target_zone": target_zone or f"{side_name}_sidewalk",
+        "corridor_polyline": corridor_points,
         "planting_points": planting_points,
         "spacing": round(spacing_px, 1),
-        "depth": round(float(np.mean(depth_values)), 3) if depth_values else 0.5,
-        "scale": round(float(np.mean(scale_values)), 3) if scale_values else 0.7,
+        "depth": mean_depth,
+        "relative_depth": mean_depth,
+        "scale": mean_scale,
         "ground_anchor": all_ground_anchors[0] if all_ground_anchors else [width // 4, int(height * 0.8)],
         "canopy_extent": overall_canopy_extent,
+        "tree_height": mean_tree_h,
+        "trunk_width": mean_trunk_w,
+        "planting_pit": anchors[0].get("planting_pit", {}) if anchors else {},
+        "intended_shade_coverage": total_intended_shade,
         # Backwards-compatible keys
         "anchors": anchors,
-        "corridor_polyline": corridor_points,
     }
 
 
@@ -271,7 +330,8 @@ def compute_shade_structure_layout(
     """
     valid_sidewalk = sidewalk_mask.copy() & (~road_mask)
     if protected_mask is not None and np.count_nonzero(protected_mask) > 0:
-        valid_sidewalk &= (~protected_mask)
+        prot_dilated = cv2.dilate(protected_mask.astype(np.uint8), np.ones((25, 25), np.uint8), iterations=1) > 0
+        valid_sidewalk &= (~prot_dilated)
 
     if target_zone == "left_sidewalk":
         valid_sidewalk[:, int(width * 0.55):] = False
@@ -301,11 +361,22 @@ def compute_shade_structure_layout(
             [float(default_x2 + 10), float(default_y2 - int(height * 0.28))],
             [float(default_x2), float(default_y2 - int(height * 0.18))],
         ]
+        shadow_pts = [
+            [float(p1[0] - span_x1), float(p1[1])],
+            [float(p2[0] - span_x2), float(p2[1])],
+            [float(p2[0] + span_x2), float(p2[1])],
+            [float(p1[0] + span_x1), float(p1[1])],
+        ]
         return {
+            "target_zone": target_zone or "sidewalk",
             "anchor_points": support_points,
             "support_points": support_points,
             "footprint_polygon": footprint_polygon,
             "columns_count": len(support_points),
+            "orientation": "parallel_to_pedestrian_corridor",
+            "canopy_height": int(height * 0.18),
+            "ground_contact": support_points,
+            "intended_shadow_region": shadow_pts,
         }
 
     # Find two distinct ground anchors along the sidewalk corridor
@@ -348,11 +419,23 @@ def compute_shade_structure_layout(
         [float(p1[0] + span_x1), float(top_y1 - 12)],
     ]
 
+    intended_shadow = [
+        [float(p1[0] - span_x1), float(p1[1])],
+        [float(p2[0] - span_x2), float(p2[1])],
+        [float(p2[0] + span_x2), float(p2[1])],
+        [float(p1[0] + span_x1), float(p1[1])],
+    ]
+
     return {
+        "target_zone": target_zone or "sidewalk",
         "anchor_points": ground_pts,
         "support_points": ground_pts,
         "footprint_polygon": footprint_polygon,
         "columns_count": len(ground_pts),
+        "orientation": "parallel_to_pedestrian_corridor",
+        "canopy_height": int((col_h1 + col_h2) // 2),
+        "ground_contact": ground_pts,
+        "intended_shadow_region": intended_shadow,
     }
 
 
@@ -385,6 +468,12 @@ def populate_intervention_explicit_geometry(
     prot_mask = build_protected_object_mask(w, h, seg_result)
     depth_map = getattr(scene_understanding, "depth_map", None) if scene_understanding else None
 
+    def _set_attr(obj: Any, key: str, val: Any) -> None:
+        if isinstance(obj, dict):
+            obj[key] = val
+        else:
+            setattr(obj, key, val)
+
     if itype == "tree_canopy":
         layout = compute_tree_row_layout(
             width=w,
@@ -397,14 +486,19 @@ def populate_intervention_explicit_geometry(
             target_zone=tzone,
             requested_trees=3,
         )
-        if isinstance(intervention, dict):
-            intervention["anchors"] = layout["anchors"]
-            intervention["spacing"] = layout["spacing"]
-            intervention["corridor_polyline"] = layout["corridor_polyline"]
-        else:
-            intervention.anchors = layout["anchors"]
-            intervention.spacing = layout["spacing"]
-            intervention.corridor_polyline = layout["corridor_polyline"]
+        _set_attr(intervention, "anchors", layout["anchors"])
+        _set_attr(intervention, "spacing", layout["spacing"])
+        _set_attr(intervention, "corridor_polyline", layout["corridor_polyline"])
+        _set_attr(intervention, "planting_points", layout["planting_points"])
+        _set_attr(intervention, "ground_anchor", layout["ground_anchor"])
+        _set_attr(intervention, "canopy_extent", layout["canopy_extent"])
+        _set_attr(intervention, "tree_height", layout["tree_height"])
+        _set_attr(intervention, "trunk_width", layout["trunk_width"])
+        _set_attr(intervention, "planting_pit", layout["planting_pit"])
+        _set_attr(intervention, "intended_shade_coverage", layout["intended_shade_coverage"])
+        _set_attr(intervention, "relative_depth", layout["relative_depth"])
+        _set_attr(intervention, "scale", layout["scale"])
+        _set_attr(intervention, "target_zone", layout["target_zone"])
 
     elif itype == "shade_structure":
         layout = compute_shade_structure_layout(
@@ -415,38 +509,42 @@ def populate_intervention_explicit_geometry(
             protected_mask=prot_mask,
             target_zone=tzone,
         )
-        if isinstance(intervention, dict):
-            intervention["anchor_points"] = layout["anchor_points"]
-            intervention["support_points"] = layout["support_points"]
-            intervention["footprint_polygon"] = layout["footprint_polygon"]
-        else:
-            intervention.anchor_points = layout["anchor_points"]
-            intervention.support_points = layout["support_points"]
-            intervention.footprint_polygon = layout["footprint_polygon"]
+        _set_attr(intervention, "anchor_points", layout["anchor_points"])
+        _set_attr(intervention, "support_points", layout["support_points"])
+        _set_attr(intervention, "footprint_polygon", layout["footprint_polygon"])
+        _set_attr(intervention, "orientation", layout["orientation"])
+        _set_attr(intervention, "canopy_height", layout["canopy_height"])
+        _set_attr(intervention, "ground_contact", layout["ground_contact"])
+        _set_attr(intervention, "intended_shadow_region", layout["intended_shadow_region"])
+        _set_attr(intervention, "target_zone", layout["target_zone"])
 
     elif itype == "cool_pavement":
         poly = extract_polygon_contour(road_mask)
         quad = extract_surface_quadrilateral(road_mask)
-        if isinstance(intervention, dict):
-            intervention["surface_polygon"] = poly
-            intervention["surface_quad"] = quad
-        else:
-            intervention.surface_polygon = poly
-            intervention.surface_quad = quad
+        ry, rx = np.where(road_mask)
+        extent = [int(np.min(rx)), int(np.min(ry)), int(np.max(rx)), int(np.max(ry))] if rx.size > 0 else [0, 0, w, h]
+        _set_attr(intervention, "surface_polygon", poly)
+        _set_attr(intervention, "surface_quad", quad)
+        _set_attr(intervention, "extent", extent)
+        _set_attr(intervention, "material_type", "high_albedo_solar_reflective_asphalt")
+        _set_attr(intervention, "target_zone", tzone or "roadway")
 
     elif itype == "permeable_pave":
         poly = extract_polygon_contour(pavement_mask)
         quad = extract_surface_quadrilateral(pavement_mask)
-        if isinstance(intervention, dict):
-            intervention["surface_polygon"] = poly
-            intervention["surface_quad"] = quad
-        else:
-            intervention.surface_polygon = poly
-            intervention.surface_quad = quad
+        py, px = np.where(pavement_mask)
+        extent = [int(np.min(px)), int(np.min(py)), int(np.max(px)), int(np.max(py))] if px.size > 0 else [0, 0, w, h]
+        _set_attr(intervention, "surface_polygon", poly)
+        _set_attr(intervention, "surface_quad", quad)
+        _set_attr(intervention, "extent", extent)
+        _set_attr(intervention, "material_type", "interlocking_modular_porous_pavers")
+        _set_attr(intervention, "target_zone", tzone or "sidewalk")
 
     elif itype in ("cool_roof", "green_roof"):
         poly = extract_polygon_contour(roof_mask)
-        if isinstance(intervention, dict):
-            intervention["roof_polygon"] = poly
-        else:
-            intervention.roof_polygon = poly
+        _set_attr(intervention, "roof_polygon", poly)
+        _set_attr(
+            intervention,
+            "treatment_type",
+            "extensive_sedum_vegetated_roof" if itype == "green_roof" else "high_albedo_elastomeric_reflective_coating",
+        )

@@ -2,7 +2,7 @@
 
 from .base import ImageEditingProvider
 from .gemini_provider import GeminiImageEditingProvider
-from .sdxl_provider import LocalSDXLInpaintingProvider
+from .sd15_inpaint_provider import LocalSD15InpaintingProvider, LocalSDXLInpaintingProvider
 from .mask_builder import build_inpainting_mask, build_pass_mask, build_protected_object_mask
 from .prompts import (
     build_redesign_prompt,
@@ -31,6 +31,7 @@ from .harmonization import harmonize_intervention_crop
 __all__ = [
     "ImageEditingProvider",
     "GeminiImageEditingProvider",
+    "LocalSD15InpaintingProvider",
     "LocalSDXLInpaintingProvider",
     "build_inpainting_mask",
     "build_pass_mask",

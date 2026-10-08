@@ -41,6 +41,7 @@ if env_path.exists():
 
 from image_generation import (
     GeminiImageEditingProvider,
+    LocalSD15InpaintingProvider,
     LocalSDXLInpaintingProvider,
     build_inpainting_mask,
     build_pass_mask,
@@ -69,12 +70,15 @@ from planner import (
 from scene_understanding import analyze_scene, render_heat_priority_colormap
 from segmentation import SegFormerEngine
 
-IMAGE_PROVIDER = os.environ.get("IMAGE_PROVIDER", "local_sdxl").strip().lower()
+IMAGE_PROVIDER = os.environ.get("IMAGE_PROVIDER", "local_sd15").strip().lower()
+if IMAGE_PROVIDER == "local_sdxl":
+    IMAGE_PROVIDER = "local_sd15"
 
 inpainter = ResilientInpainter()
 
-# Lazy provider construction: only instantiate SDXL if local_sdxl is active; never require Gemini API key
-sdxl_provider = LocalSDXLInpaintingProvider.get_instance() if IMAGE_PROVIDER == "local_sdxl" else None
+# Lazy provider construction: only instantiate SD 1.5 if local_sd15 is active; never require Gemini API key
+sd15_provider = LocalSD15InpaintingProvider.get_instance() if IMAGE_PROVIDER in ("local_sd15", "local_sdxl") else None
+sdxl_provider = sd15_provider
 _gemini_provider: Optional[GeminiImageEditingProvider] = None
 
 
@@ -236,20 +240,21 @@ def compute_cache_key(img_bytes: bytes, plan_dict: Dict[str, Any], quality_tier:
 @app.get("/api/v1/health")
 def health():
     seg_info = seg_engine.get_status()
-    sdxl_info = sdxl_provider.get_status() if sdxl_provider is not None else {
+    active_sd = sd15_provider or sdxl_provider
+    sd15_info = active_sd.get_status() if active_sd is not None else {
         "available": False,
         "loaded": False,
-        "model": "none",
+        "model": "stable-diffusion-v1-5/stable-diffusion-inpainting",
         "model_path": "",
         "cuda_available": False,
         "gpu_name": "None",
         "vram_gb": 0.0,
-        "error": "Local SDXL provider not active",
+        "error": "Local SD 1.5 provider not active",
     }
     return {
         "ok": True,
         "generative_provider": IMAGE_PROVIDER,
-        "local_generator": sdxl_info,
+        "local_generator": sd15_info,
         "heat_model_available": bundle is not None and "model" in bundle,
         "segmenter_available": seg_info["available"],
         "segmenter_model": seg_info["model_name"],
@@ -273,7 +278,7 @@ async def analyze_and_redesign(
     1. Scene Analysis (SegFormer semantic perception)
     2. Autonomous Spatial Urban Design Planning (no user toggles required)
     3. Spatial Inpainting Mask Construction (pedestrian curb envelopes, roadway, roofs)
-    4. Local SDXL Inpainting on NVIDIA RTX GPU
+    4. Local SD 1.5 Inpainting on NVIDIA RTX GPU
     5. Quantitative Visual Validation (real diff_mean, pct_changed against original)
     6. Estimated Microclimate Thermal Impact Computation
     """
@@ -329,7 +334,7 @@ async def analyze_and_redesign(
             "validation": cached_entry["validation"],
         }
 
-    # 5. Generative Redesign via Autonomous Multi-Pass SDXL Inpainting (Part L, M, N, O, P)
+    # 5. Generative Redesign via Autonomous Multi-Pass SD 1.5 Inpainting (Part 18, 19, 20)
     provider_name = IMAGE_PROVIDER
     edited_img = None
     gen_error = None
@@ -337,16 +342,16 @@ async def analyze_and_redesign(
     normalized_img = None
     model_name = "stable-diffusion-v1-5/stable-diffusion-inpainting"
 
-    if IMAGE_PROVIDER == "local_sdxl":
-        active_sdxl = sdxl_provider or LocalSDXLInpaintingProvider.get_instance()
+    if IMAGE_PROVIDER in ("local_sd15", "local_sdxl"):
+        active_sd = sd15_provider or sdxl_provider or LocalSD15InpaintingProvider.get_instance()
 
         try:
-            logger.info("Starting local redesign generation attempt 1 on %s", active_sdxl.gpu_name)
+            logger.info("Starting local redesign generation attempt 1 on %s", active_sd.gpu_name)
             edited_img, report, multi_pass_meta = await run_autonomous_multi_pass_redesign(
                 image=pil_img,
                 plan=plan,
                 seg_result=seg_res,
-                sdxl=active_sdxl,
+                sdxl=active_sd,
                 scene_understanding=scene,
                 quality_tier=quality_tier,
                 save_debug=True,
@@ -369,7 +374,7 @@ async def analyze_and_redesign(
                     image=pil_img,
                     plan=plan,
                     seg_result=seg_res,
-                    sdxl=active_sdxl,
+                    sdxl=active_sd,
                     scene_understanding=scene,
                     quality_tier=quality_tier,
                     save_debug=True,
@@ -645,12 +650,17 @@ async def segment(file: UploadFile = File(...)):
         raise HTTPException(500, f"Segmentation error: {e}")
 
 
-@app.post("/api/v1/inpaint")
+@app.post("/api/v1/inpaint", deprecated=True)
 async def inpaint_scene(
     file: UploadFile = File(...),
     interventions: str = Form("[]"),
     polygons: str | None = Form(None),
 ):
+    """[DEPRECATED] Legacy procedural inpainting endpoint.
+    
+    Warning: Retained strictly for legacy test compatibility.
+    Primary autonomous generation route is /api/v1/analyze-and-redesign.
+    """
     try:
         content = await file.read()
         img = Image.open(io.BytesIO(content)).convert("RGB")
