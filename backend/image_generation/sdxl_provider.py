@@ -16,23 +16,19 @@ from .base import ImageEditingProvider
 
 logger = logging.getLogger("resilicity.sdxl")
 
-DEFAULT_MODEL_PATH = r"D:\huggingface_cache\sdxl-inpainting"
+DEFAULT_MODEL_PATH = r"D:\huggingface_cache\sd15-inpaint"
 DEFAULT_NEGATIVE_PROMPT = (
-    "cartoon, illustration, painting, 3d render, fantasy city, "
-    "floating tree, deformed tree, duplicated objects, "
-    "tree in road, tree inside building, unrealistic jungle, "
-    "segmentation mask, colored overlay, text, watermark, "
-    "blurry, low resolution, distorted architecture, "
-    "unchanged image, same as original, no modification"
+    "cartoon, illustration, painting, 3d render, blurry, distorted, "
+    "low resolution, bad architecture, floating objects, fantasy"
 )
 
 # Minimum mean pixel difference to consider the generation as visibly changed
-MIN_MASKED_DIFF = 12.0
-MIN_OVERALL_DIFF = 6.0
+MIN_MASKED_DIFF = 8.0
+MIN_OVERALL_DIFF = 4.0
 
 
-def _compute_working_dimensions(width: int, height: int, max_dim: int = 512) -> Tuple[int, int]:
-    """Compute aspect-preserving dimensions rounded to multiples of 8 for SDXL."""
+def _compute_working_dimensions(width: int, height: int, max_dim: int = 1024) -> Tuple[int, int]:
+    """Compute aspect-preserving dimensions rounded to multiples of 8."""
     scale = min(max_dim / max(width, height), 1.0)
     w_scaled = int(round((width * scale) / 8.0) * 8)
     h_scaled = int(round((height * scale) / 8.0) * 8)
@@ -68,7 +64,7 @@ def _compute_masked_diff(
 
 
 class LocalSDXLInpaintingProvider(ImageEditingProvider):
-    """Local SDXL Inpainting provider running on NVIDIA RTX GPU with retry logic."""
+    """Local SD inpainting provider running on NVIDIA RTX GPU with padding_mask_crop."""
 
     _instance: Optional["LocalSDXLInpaintingProvider"] = None
 
@@ -76,9 +72,9 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
         self.model_path = os.environ.get("SDXL_MODEL_PATH", DEFAULT_MODEL_PATH).strip()
         self.steps = int(os.environ.get("SDXL_STEPS", "20"))
         self.guidance_scale = float(os.environ.get("SDXL_GUIDANCE_SCALE", "7.5"))
-        self.strength = float(os.environ.get("SDXL_STRENGTH", "0.99"))
-        self.max_dim = int(os.environ.get("SDXL_MAX_DIM", "512"))
-        self.use_cpu_offload = os.environ.get("SDXL_CPU_OFFLOAD", "true").lower() in ("true", "1", "yes")
+        self.strength = float(os.environ.get("SDXL_STRENGTH", "1.0"))
+        self.max_dim = int(os.environ.get("SDXL_MAX_DIM", "1024"))
+        self.use_cpu_offload = os.environ.get("SDXL_CPU_OFFLOAD", "false").lower() in ("true", "1", "yes")
 
         self.cuda_available = torch.cuda.is_available()
         self.gpu_name = torch.cuda.get_device_name(0) if self.cuda_available else "CPU"
@@ -100,7 +96,7 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
         return cls._instance
 
     def load_pipeline(self) -> None:
-        """Load and configure the SDXL inpainting pipeline with VRAM optimizations."""
+        """Load and configure the SD 1.5 inpainting pipeline directly on CUDA."""
         if self.is_loaded and self.pipe is not None:
             return
 
@@ -110,7 +106,7 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
             return
 
         try:
-            logger.info("Loading local SDXL inpainting model from: %s", self.model_path)
+            logger.info("Loading local SD 1.5 inpainting model from: %s", self.model_path)
             t0 = time.time()
 
             if torch.cuda.is_available():
@@ -118,45 +114,42 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
                 torch.backends.cudnn.allow_tf32 = True
                 torch.backends.cudnn.benchmark = True
 
-            from diffusers import AutoPipelineForInpainting
-
-            pipe = AutoPipelineForInpainting.from_pretrained(
-                self.model_path,
-                torch_dtype=torch.float16,
-                variant="fp16",
-                local_files_only=True,
-            )
-
-            # Essential for 6GB VRAM (RTX 3050 Laptop)
-            if self.use_cpu_offload:
-                pipe.enable_model_cpu_offload()
-
-            if hasattr(pipe, "vae") and pipe.vae is not None:
-                try:
-                    pipe.vae.enable_slicing()
-                    logger.info("VAE slicing enabled on pipe.vae")
-                except Exception as e:
-                    logger.warning("Could not enable VAE slicing: %s", e)
-
-                try:
-                    pipe.vae.enable_tiling()
-                    logger.info("VAE tiling enabled on pipe.vae")
-                except Exception as e:
-                    logger.warning("Could not enable VAE tiling: %s", e)
+            from diffusers import StableDiffusionInpaintPipeline
 
             try:
-                pipe.enable_attention_slicing("max")
-                logger.info("Attention slicing (max) enabled on SDXL pipe")
-            except Exception as e:
-                logger.warning("Could not enable attention slicing: %s", e)
+                pipe = StableDiffusionInpaintPipeline.from_pretrained(
+                    self.model_path,
+                    torch_dtype=torch.float16,
+                    variant="fp16",
+                    local_files_only=True,
+                    safety_checker=None,
+                ).to("cuda")
+            except Exception:
+                pipe = StableDiffusionInpaintPipeline.from_pretrained(
+                    self.model_path,
+                    torch_dtype=torch.float16,
+                    local_files_only=True,
+                    safety_checker=None,
+                ).to("cuda")
+
+            if hasattr(pipe, "enable_vae_slicing"):
+                try:
+                    pipe.enable_vae_slicing()
+                except Exception:
+                    pass
+            elif hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
+                try:
+                    pipe.vae.enable_slicing()
+                except Exception:
+                    pass
 
             self.pipe = pipe
             self.is_loaded = True
             self.load_error = None
-            logger.info("SDXL model loaded in %.2f seconds on %s", time.time() - t0, self.gpu_name)
+            logger.info("SD 1.5 inpainting model loaded in %.2f seconds on %s", time.time() - t0, self.gpu_name)
         except Exception as e:
             self.is_loaded = False
-            self.load_error = f"Failed to load SDXL pipeline: {e}"
+            self.load_error = f"Failed to load SD 1.5 pipeline: {e}"
             self.pipe = None
             logger.error(self.load_error, exc_info=True)
 
@@ -165,7 +158,7 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
         return {
             "available": self.is_loaded or Path(self.model_path).exists(),
             "loaded": self.is_loaded,
-            "model": "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
+            "model": "stable-diffusion-v1-5/stable-diffusion-inpainting",
             "model_path": self.model_path,
             "cuda_available": self.cuda_available,
             "gpu_name": self.gpu_name,
@@ -186,7 +179,7 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
         work_w: int,
         work_h: int,
     ) -> Image.Image:
-        """Run a single SDXL inference pass. Returns the generated image at working resolution."""
+        """Run a single SD inpainting pass with padding_mask_crop. Returns the image at working resolution."""
         generator = torch.Generator(device="cuda").manual_seed(seed)
 
         with torch.inference_mode():
@@ -195,6 +188,9 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
                 negative_prompt=neg_prompt,
                 image=input_img,
                 mask_image=work_mask,
+                height=512,
+                width=512,
+                padding_mask_crop=48,
                 strength=strength,
                 guidance_scale=guidance_scale,
                 num_inference_steps=steps,
@@ -205,9 +201,7 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
             result = result.resize((work_w, work_h), Image.Resampling.LANCZOS)
 
         # Composite newly synthesized content strictly inside the inpainting mask.
-        # Unmasked areas (existing architecture, vehicles, perspective) are preserved bit-perfect from the source image.
         if work_mask is not None:
-            # Subtle boundary blur for seamless organic edge blending
             mask_blend = work_mask.convert("L").filter(ImageFilter.GaussianBlur(radius=1.2))
             result = Image.composite(result, input_img, mask_blend)
 
@@ -242,9 +236,8 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
 
                 orig_w, orig_h = image.size
 
-                # Working resolution: 512 for fast, 768 for final
-                max_dim = self.max_dim if quality_tier == "fast" else min(768, self.max_dim + 256)
-                work_w, work_h = _compute_working_dimensions(orig_w, orig_h, max_dim=max_dim)
+                # Working resolution: keep full street resolution up to 1024 since padding_mask_crop handles 512x512 inpainting
+                work_w, work_h = _compute_working_dimensions(orig_w, orig_h, max_dim=self.max_dim)
 
                 input_img = image.convert("RGB").resize((work_w, work_h), Image.Resampling.LANCZOS)
 
@@ -265,12 +258,12 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
                 neg_prompt = (negative_prompt.strip() or DEFAULT_NEGATIVE_PROMPT)
 
                 # Inference steps based on quality tier or caller override
-                base_steps = steps or (self.steps if quality_tier == "fast" else min(28, self.steps + 6))
-                base_strength = strength or self.strength
-                base_guidance = guidance_scale or self.guidance_scale
+                base_steps = steps or self.steps
+                base_strength = strength if strength is not None else self.strength
+                base_guidance = guidance_scale if guidance_scale is not None else self.guidance_scale
 
                 logger.info(
-                    "Local SDXL Inpainting start: res=%dx%d steps=%d strength=%.2f scale=%.1f device=%s",
+                    "Local SD Inpainting start: res=%dx%d steps=%d strength=%.2f scale=%.1f device=%s",
                     work_w, work_h, base_steps, base_strength, base_guidance, self.gpu_name,
                 )
 

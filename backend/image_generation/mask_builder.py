@@ -87,15 +87,16 @@ def build_geometrically_grounded_tree_mask(
     sidewalk_mask: np.ndarray,
     depth_map: Optional[np.ndarray] = None,
     protected_mask: Optional[np.ndarray] = None,
+    facade_mask: Optional[np.ndarray] = None,
     target_zone: Optional[str] = None,
     expansion_level: int = 0,
 ) -> Image.Image:
-    """Build geometrically grounded tree masks with perspective scaling.
+    """Build natural soft canopy blob tree masks with perspective scaling.
 
-    Creates discrete tree planting locations along the sidewalk corridor:
-    - Closer trees have larger trunks, expansive canopies, and distinct basins.
-    - Farther trees scale down smoothly following perspective depth.
-    - Excludes protected objects (vehicles, pedestrians, poles).
+    Creates discrete natural canopy blobs along the sidewalk corridor:
+    - Drops rigid rectangular trunks and root basins to let SD inpaint organic trees.
+    - Scales canopy dimensions according to perspective depth.
+    - Strictly keeps canopies off building facades and protected objects.
     """
     mask_arr = np.zeros((height, width), dtype=np.uint8)
     total_px = width * height
@@ -122,12 +123,11 @@ def build_geometrically_grounded_tree_mask(
         sw_y, sw_x = np.where(sw_mask_fallback)
 
     # Sample perspective-consistent planting positions along the corridor
-    # Sort points from foreground (high y) to background (low y)
     y_min, y_max = int(np.min(sw_y)), int(np.max(sw_y))
-    num_trees = 3 + expansion_level
+    num_trees = 2 + expansion_level
 
     # Exponentially spaced y positions reflecting perspective foreshortening
-    t_vals = np.linspace(0.1, 0.9, num_trees)
+    t_vals = np.linspace(0.2, 0.8, num_trees)
     y_levels = [int(y_max - (t ** 1.6) * (y_max - y_min)) for t in t_vals]
 
     for y_plant in y_levels:
@@ -135,58 +135,37 @@ def build_geometrically_grounded_tree_mask(
         if row_xs.size == 0:
             continue
 
-        # Choose a planting point: center or curb verge of this sidewalk row
         x_plant = int(np.median(row_xs))
 
         # Local depth estimate at planting point
         d_val = float(depth_map[y_plant, x_plant])  # 0.0=near, 1.0=far
-        scale_factor = float(np.clip(1.0 - 0.75 * d_val, 0.25, 1.0))  # Near: 1.0, Far: 0.25
+        scale_factor = float(np.clip(1.0 - 0.70 * d_val, 0.35, 1.0))
 
-        # Dimensions scaled by perspective
-        base_h = int(height * (0.32 + 0.06 * expansion_level))
-        tree_h = int(base_h * scale_factor)
-        canopy_rx = int(width * (0.10 + 0.02 * expansion_level) * scale_factor)
-        canopy_ry = int(tree_h * 0.45)
-        trunk_w = max(4, int(width * 0.02 * scale_factor))
+        # Elevated natural canopy blob dimensions
+        tree_h = int(height * 0.36 * scale_factor)
+        canopy_rx = int(width * (0.12 + 0.02 * expansion_level) * scale_factor)
+        canopy_ry = int(tree_h * 0.48)
 
-        trunk_top_y = max(10, y_plant - tree_h)
-        canopy_cy = trunk_top_y + int(canopy_ry * 0.3)
+        canopy_cy = max(canopy_ry + 10, y_plant - int(tree_h * 0.55))
         canopy_cx = x_plant
 
-        # 1. Planting pit / root basin on the ground
-        basin_rx = int(canopy_rx * 0.5)
-        basin_ry = max(4, int(basin_rx * 0.25))
-        cv2.ellipse(
-            mask_arr,
-            (x_plant, y_plant),
-            (basin_rx, basin_ry),
-            0, 0, 360, 255, -1,
-        )
-
-        # 2. Vertical trunk envelope
-        cv2.rectangle(
-            mask_arr,
-            (x_plant - trunk_w // 2, trunk_top_y),
-            (x_plant + trunk_w // 2, y_plant),
-            255, -1,
-        )
-
-        # 3. Naturally shaped canopy envelope (ellipse + secondary overlapping crown)
+        # One soft natural canopy blob per tree (main crown + slightly offset upper lobe)
         cv2.ellipse(
             mask_arr,
             (canopy_cx, canopy_cy),
             (canopy_rx, canopy_ry),
             0, 0, 360, 255, -1,
         )
-        # Upper crown lobe
-        upper_rx = int(canopy_rx * 0.8)
-        upper_ry = int(canopy_ry * 0.7)
         cv2.ellipse(
             mask_arr,
-            (canopy_cx, canopy_cy - int(canopy_ry * 0.35)),
-            (upper_rx, upper_ry),
+            (canopy_cx, canopy_cy - int(canopy_ry * 0.25)),
+            (int(canopy_rx * 0.85), int(canopy_ry * 0.75)),
             0, 0, 360, 255, -1,
         )
+
+    # Strictly keep canopies off building facades and walls
+    if facade_mask is not None:
+        mask_arr[facade_mask] = 0
 
     # Subtract protected objects (vehicles, pedestrians, infrastructure)
     if protected_mask is not None:
@@ -326,17 +305,19 @@ def build_pass_mask(
     # 1. Protected object mask
     protected_mask = build_protected_object_mask(w, h, seg_result)
 
-    # 2. Extract semantic surface masks
+    # 2. Extract semantic surface masks & building facade mask
     raw_preds = seg_result.get("raw_preds")
     if raw_preds is not None:
         road_mask = np.isin(raw_preds, [6, 54, 91])
         pavement_mask = np.isin(raw_preds, [3, 11, 52])
         roof_mask = np.isin(raw_preds, [105])  # Pure roof if present
+        facade_mask = np.isin(raw_preds, [0, 1, 8, 14, 25, 32, 38, 42, 48, 51, 79, 84, 88, 95])
     else:
         # Fallback from polygons
         road_mask = np.zeros((h, w), dtype=bool)
         pavement_mask = np.zeros((h, w), dtype=bool)
         roof_mask = np.zeros((h, w), dtype=bool)
+        facade_mask = np.zeros((h, w), dtype=bool)
         for m in seg_result.get("masks", []):
             cname = m.get("className")
             if cname == "road":
@@ -351,6 +332,12 @@ def build_pass_mask(
                 for p in m.get("polygons", []):
                     _draw_polygon_pts(d, p, w, h, fill=255)
                 pavement_mask = np.array(pm_img) > 128
+            elif cname == "wall":
+                wm_img = Image.new("L", (w, h), 0)
+                d = ImageDraw.Draw(wm_img)
+                for p in m.get("polygons", []):
+                    _draw_polygon_pts(d, p, w, h, fill=255)
+                facade_mask = np.array(wm_img) > 128
 
     # Depth map if available from scene understanding
     depth_map = getattr(scene_understanding, "depth_map", None) if scene_understanding else None
@@ -363,6 +350,7 @@ def build_pass_mask(
             sidewalk_mask=pavement_mask,
             depth_map=depth_map,
             protected_mask=protected_mask,
+            facade_mask=facade_mask,
             target_zone=target_zone,
             expansion_level=expansion_level,
         )

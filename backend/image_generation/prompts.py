@@ -195,51 +195,21 @@ Generate a single photorealistic, high-resolution architectural photograph showi
 
 
 SDXL_NEGATIVE_PROMPT = (
-    "cartoon, illustration, painting, drawing, 3d render, CGI, "
-    "unchanged scene, same as original, no change, subtle, identical, "
-    "blurry, out of focus, low resolution, noisy, bad architecture, "
-    "trees in traffic lanes, floating trees, floating objects, warped geometry, "
-    "text, watermark, logo, bad perspective, oversaturated neon, flat colors"
+    "cartoon, illustration, 3d render, blurry, distorted, low quality, bad architecture, deformed"
 )
 
 
 def build_pass_sdxl_prompt(intervention_type: str, attempt: int = 0) -> str:
-    """Build a dedicated, intervention-specific prompt for autonomous multi-pass SDXL inpainting (Part M).
+    """Build a dedicated, short prompt for localized SD inpainting.
     
-    Each pass focuses exclusively on synthesizing ONE specific resilient physical intervention,
-    instructing the model to make the modification visibly obvious and photorealistic while
-    strictly preserving perspective, architecture, and surrounding infrastructure.
-    Kept strictly under 75 CLIP tokens.
+    SD 1.5 excels with short, direct prompts describing the localized element itself.
+    Strictly kept under 20 tokens to maximize CLIP fidelity.
     """
     if intervention_type == "tree_canopy":
-        if attempt == 0:
-            return (
-                "photorealistic urban street photograph, mature broad canopy green street trees rooted in "
-                "sidewalk planting pits, textured bark trunks, spreading leafy branches, natural cast shade, "
-                "preserving buildings, road geometry, vehicles, sharp focus"
-            )
-        elif attempt == 1:
-            return (
-                "high-quality architectural photo, prominent leafy green shade trees planted along sidewalk verge, "
-                "lush broad foliage, realistic wood trunks, grounded tree basins, crisp shadows, preserving architecture, 8k"
-            )
-        else:
-            return (
-                "award-winning urban landscape photo, mature green street trees lining pedestrian sidewalk, "
-                "dense natural leaf canopy, textured trunks, cooling cast shade, photorealistic streetscape, sharp focus"
-            )
+        return "a leafy green street tree, realistic, natural light"
 
     elif intervention_type == "shade_structure":
-        if attempt == 0:
-            return (
-                "photorealistic architectural installation, modern tensile fabric pedestrian shade canopy anchored to "
-                "sidewalk ground with slender steel columns, geometric sailcloth, crisp angled shadows, preserving buildings, sharp focus"
-            )
-        else:
-            return (
-                "architectural photograph of modern urban shade structure, light-toned tensile fabric canopy, "
-                "slender steel support posts grounded in pavement, clean design, natural daylight, sharp focus"
-            )
+        return "modern tensile fabric shade canopy, realistic architectural structure, natural light"
 
     elif intervention_type == "cool_pavement":
         if attempt == 0:

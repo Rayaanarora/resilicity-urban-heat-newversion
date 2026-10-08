@@ -334,7 +334,7 @@ async def analyze_and_redesign(
     gen_error = None
     report = None
     normalized_img = None
-    model_name = "diffusers/stable-diffusion-xl-1.0-inpainting-0.1"
+    model_name = "stable-diffusion-v1-5/stable-diffusion-inpainting"
 
     if IMAGE_PROVIDER == "local_sdxl":
         active_sdxl = sdxl_provider or LocalSDXLInpaintingProvider.get_instance()
