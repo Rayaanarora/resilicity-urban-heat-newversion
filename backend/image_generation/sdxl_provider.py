@@ -7,7 +7,7 @@ import random
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from PIL import Image
+from PIL import Image, ImageFilter
 
 import torch
 import numpy as np
@@ -112,6 +112,12 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
         try:
             logger.info("Loading local SDXL inpainting model from: %s", self.model_path)
             t0 = time.time()
+
+            if torch.cuda.is_available():
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                torch.backends.cudnn.benchmark = True
+
             from diffusers import AutoPipelineForInpainting
 
             pipe = AutoPipelineForInpainting.from_pretrained(
@@ -137,6 +143,12 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
                     logger.info("VAE tiling enabled on pipe.vae")
                 except Exception as e:
                     logger.warning("Could not enable VAE tiling: %s", e)
+
+            try:
+                pipe.enable_attention_slicing("max")
+                logger.info("Attention slicing (max) enabled on SDXL pipe")
+            except Exception as e:
+                logger.warning("Could not enable attention slicing: %s", e)
 
             self.pipe = pipe
             self.is_loaded = True
@@ -191,6 +203,13 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
 
         if result.size != (work_w, work_h):
             result = result.resize((work_w, work_h), Image.Resampling.LANCZOS)
+
+        # Composite newly synthesized content strictly inside the inpainting mask.
+        # Unmasked areas (existing architecture, vehicles, perspective) are preserved bit-perfect from the source image.
+        if work_mask is not None:
+            # Subtle boundary blur for seamless organic edge blending
+            mask_blend = work_mask.convert("L").filter(ImageFilter.GaussianBlur(radius=1.2))
+            result = Image.composite(result, input_img, mask_blend)
 
         return result
 
@@ -301,7 +320,7 @@ class LocalSDXLInpaintingProvider(ImageEditingProvider):
                             best_result = result
 
                         # Accept if the masked region changed enough
-                        if masked_diff >= MIN_MASKED_DIFF and overall_diff >= MIN_OVERALL_DIFF:
+                        if masked_diff >= MIN_MASKED_DIFF:
                             logger.info(
                                 "SDXL accepted on attempt %d (masked_diff=%.2f, overall=%.2f)",
                                 attempt + 1, masked_diff, overall_diff,

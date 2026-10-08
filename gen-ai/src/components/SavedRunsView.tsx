@@ -121,7 +121,7 @@ export const SavedRunsView: React.FC<SavedRunsViewProps> = ({ onExportClick }) =
 
               <div className="flex flex-col gap-1.5 text-xs font-sans">
                 <span className="text-[11px] font-mono uppercase text-slate-400 font-semibold">
-                  Active Measures ({run.activeInterventionsCount})
+                  Autonomous Interventions ({run.activeInterventionsCount})
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {run.interventions.map((intName, idx) => (

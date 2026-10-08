@@ -43,9 +43,12 @@ from image_generation import (
     GeminiImageEditingProvider,
     LocalSDXLInpaintingProvider,
     build_inpainting_mask,
+    build_pass_mask,
+    build_protected_object_mask,
     build_redesign_prompt,
     build_refinement_prompt,
     build_sdxl_inpainting_prompt,
+    run_autonomous_multi_pass_redesign,
     parse_refinement_intent,
     validate_image_output,
     UnifiedRedesignResponse,
@@ -63,6 +66,7 @@ from planner import (
     planner_available,
     router as planner_router,
 )
+from scene_understanding import analyze_scene, render_heat_priority_colormap
 from segmentation import SegFormerEngine
 
 IMAGE_PROVIDER = os.environ.get("IMAGE_PROVIDER", "local_sdxl").strip().lower()
@@ -283,32 +287,38 @@ async def analyze_and_redesign(
     except Exception as e:
         raise HTTPException(400, f"Invalid image file: {e}")
 
-    # 1. Perception Layer (SegFormer)
+    # 1. Perception Layer (SegFormer with Protected Objects)
     surfaces: Dict[str, float] = {}
     seg_res = {}
     try:
         seg_res = seg_engine.segment_image(pil_img)
+        seg_engine.offload_to_cpu()
         for m in seg_res.get("masks", []):
             surfaces[m["className"]] = m["areaPercentage"]
     except Exception as e:
         warnings.warn(f"Segmentation perception fallback: {e}")
         surfaces = {"road": 35.0, "wall": 25.0, "pavement": 15.0, "vegetation": 5.0, "roof": 0.0}
 
-    # 2. Autonomous Spatial Urban Design Planner
+    # 2. Deep Spatial Scene Understanding
+    scene = analyze_scene(pil_img, seg_res)
+
+    # 3. Autonomous Spatial Urban Design Planner (Part G, H, I, T)
     plan = generate_spatial_plan(
         pil_img,
         surfaces,
+        seg_result=seg_res,
         design_profile=design_profile,  # type: ignore
     )
     analysis = analyze_scene_heuristics(pil_img, surfaces)
 
-    # 3. Deterministic Caching with Real Validation Metrics
+    # 4. Deterministic Caching with Real Validation Metrics
     plan_dict = plan.dict()
     cache_key = compute_cache_key(content, plan_dict, quality_tier, refinement_prompt or "")
     if cache_key in GENERATION_CACHE:
         cached_entry = GENERATION_CACHE[cache_key]
         return {
             "scene_analysis": analysis.dict(),
+            "scene_understanding": scene.to_dict(),
             "design_plan": plan_dict,
             "visualization": cached_entry["visualization"],
             "thermal_impact": cached_entry.get(
@@ -318,82 +328,36 @@ async def analyze_and_redesign(
             "validation": cached_entry["validation"],
         }
 
-    # 4. Generative Redesign via Local SDXL Inpainting (Task 5 Retry Loop) or Gemini
+    # 5. Generative Redesign via Autonomous Multi-Pass SDXL Inpainting (Part L, M, N, O, P)
     provider_name = IMAGE_PROVIDER
-    max_retries = 3
     edited_img = None
     gen_error = None
     report = None
     normalized_img = None
-    final_seed = 42
-    mask_meta = {}
-    mask_img = None
+    model_name = "diffusers/stable-diffusion-xl-1.0-inpainting-0.1"
 
     if IMAGE_PROVIDER == "local_sdxl":
-        model_name = "diffusers/stable-diffusion-xl-1.0-inpainting-0.1"
         active_sdxl = sdxl_provider or LocalSDXLInpaintingProvider.get_instance()
 
-        for attempt in range(max_retries):
-            current_seed = 42 if attempt == 0 else random.randint(100, 999999)
-            # Dilation escalation on retry: expansion_level 0 -> 1 -> 2
-            mask_img, mask_meta = build_inpainting_mask(
-                pil_img,
-                seg_res,
-                plan.interventions,
-                expansion_level=attempt,
+        try:
+            edited_img, report, multi_pass_meta = await run_autonomous_multi_pass_redesign(
+                image=pil_img,
+                plan=plan,
+                seg_result=seg_res,
+                sdxl=active_sdxl,
+                scene_understanding=scene,
+                quality_tier=quality_tier,
                 save_debug=True,
                 debug_dir=DEBUG_DIR,
+                base_seed=42,
             )
-
-            prompt = build_sdxl_inpainting_prompt(plan, attempt=attempt)
-            guidance = 7.5 + attempt * 1.0
-            strength = 0.999
-            steps = 20 if quality_tier == "fast" else 26
-
-            # Task 1: Complete pipeline audit logging
-            logger.info("=" * 60)
-            logger.info("SDXL PIPELINE EXECUTION - Attempt %d/%d", attempt + 1, max_retries)
-            logger.info("Chosen interventions: %s", [f"{i.type} -> {i.target_region} (cov={int(i.coverage*100)}%)" for i in plan.interventions])
-            logger.info("Target semantic classes: %s", [i.target_region for i in plan.interventions])
-            logger.info("Individual mask coverages: %s", mask_meta.get("individual_coverages"))
-            logger.info("Combined mask coverage: %.1f%% (%d px)", mask_meta.get("coverage_percentage", 0.0), mask_meta.get("covered_pixels", 0))
-            logger.info("Final SDXL prompt: %s", prompt)
-            logger.info("Generation dimensions: 512x512 (scaled)")
-            logger.info("Strength: %.3f | Guidance: %.1f | Steps: %d | Seed: %d", strength, guidance, steps, current_seed)
-            logger.info("=" * 60)
-
-            edited_img, gen_error = await active_sdxl.edit(
-                pil_img,
-                prompt=prompt,
-                quality_tier=quality_tier,
-                mask_image=mask_img,
-                seed=current_seed,
-                strength=strength,
-                guidance_scale=guidance,
-                steps=steps,
-                max_retries=1,
-            )
-
-            if edited_img is not None:
-                # Task 5: Multi-stage quantitative validation
-                is_valid, report, normalized_img = validate_image_output(
-                    edited_img,
-                    pil_img.size,
-                    orig_img=pil_img,
-                    mask_img=mask_img,
-                    individual_masks=mask_meta.get("individual_masks"),
-                    min_diff_mean=5.0,
-                    min_masked_diff=12.0,
-                    min_pct_changed=4.0,
-                )
-                if is_valid:
-                    logger.info("Validation PASSED on attempt %d: diff_mean=%.1f, masked_diff=%.1f", attempt + 1, report.diff_mean or 0, report.masked_diff or 0)
-                    final_seed = current_seed
-                    break
-                else:
-                    logger.warning("Validation REJECTED on attempt %d: %s (escalating mask & prompt)", attempt + 1, report.warnings)
-                    gen_error = f"Validation rejected on attempt {attempt + 1}: {', '.join(report.warnings)}"
-                    edited_img = None
+            normalized_img = edited_img
+            if report is not None and not report.is_valid:
+                gen_error = f"Validation rejected: {', '.join(report.warnings)}"
+        except Exception as e:
+            logger.error("Multi-pass redesign error: %s", e, exc_info=True)
+            gen_error = str(e)
+            edited_img = None
     else:
         # Fallback to Gemini multimodal provider
         gemini_prov = get_gemini_provider()
@@ -413,20 +377,32 @@ async def analyze_and_redesign(
     elapsed_ms = int((time.time() - t0) * 1000)
     thermal = compute_thermal_impact(surfaces, [i.dict() for i in plan.interventions])
 
-    # Task 6: Export all 9 debug artifacts in development mode
+    # 6. Part V: Full Development & Debug Artifact Bundle Export
     try:
-        pil_img.save(DEBUG_DIR / "debug_original_image.png")
-        save_segmentation_visualization(pil_img, seg_res, DEBUG_DIR / "debug_segmentation_visualization.png")
-        if "individual_masks" in mask_meta:
-            for m_key, m_val in mask_meta["individual_masks"].items():
-                m_val.save(DEBUG_DIR / f"debug_{m_key}.png")
-        if mask_img is not None:
-            mask_img.save(DEBUG_DIR / "debug_combined_mask.png")
+        pil_img.save(DEBUG_DIR / "original.png")
+        save_segmentation_visualization(pil_img, seg_res, DEBUG_DIR / "segmentation.png")
+        if scene.depth_map is not None:
+            Image.fromarray((scene.depth_map * 255.0).astype(np.uint8)).save(DEBUG_DIR / "depth.png")
+        if scene.protected_mask is not None:
+            Image.fromarray((scene.protected_mask.astype(np.uint8) * 255)).save(DEBUG_DIR / "protected_objects.png")
+        if scene.heat_priority_map is not None:
+            render_heat_priority_colormap(scene.heat_priority_map).save(DEBUG_DIR / "spatial_heat_priority.png")
+        if scene.left_sidewalk_mask is not None:
+            Image.fromarray((scene.left_sidewalk_mask.astype(np.uint8) * 255)).save(DEBUG_DIR / "left_sidewalk_mask.png")
+        if scene.right_sidewalk_mask is not None:
+            Image.fromarray((scene.right_sidewalk_mask.astype(np.uint8) * 255)).save(DEBUG_DIR / "right_sidewalk_mask.png")
+        if scene.road_mask is not None:
+            Image.fromarray((scene.road_mask.astype(np.uint8) * 255)).save(DEBUG_DIR / "road_mask.png")
         if edited_img is not None:
-            edited_img.save(DEBUG_DIR / "debug_generated_image.png")
-        logger.info("Saved all debug artifacts to %s", DEBUG_DIR)
+            edited_img.save(DEBUG_DIR / "final_redesign.png")
+
+        (DEBUG_DIR / "scene_understanding.json").write_text(json.dumps(scene.to_dict(), indent=2), encoding="utf-8")
+        (DEBUG_DIR / "design_plan.json").write_text(json.dumps(plan_dict, indent=2), encoding="utf-8")
+        if report is not None:
+            (DEBUG_DIR / "validation.json").write_text(json.dumps(report.dict(), indent=2), encoding="utf-8")
+        logger.info("Exported complete debug suite to %s", DEBUG_DIR)
     except Exception as e:
-        logger.warning("Could not save debug artifacts: %s", e)
+        logger.warning("Could not export debug artifacts: %s", e)
 
     if edited_img is not None and normalized_img is not None and report is not None and report.is_valid:
         data_url = encode_image_to_base64(normalized_img, quality=92)
@@ -453,6 +429,7 @@ async def analyze_and_redesign(
 
         return {
             "scene_analysis": analysis.dict(),
+            "scene_understanding": scene.to_dict(),
             "design_plan": plan_dict,
             "visualization": vis_output,
             "thermal_impact": thermal,
@@ -466,7 +443,7 @@ async def analyze_and_redesign(
         "width": pil_img.width,
         "height": pil_img.height,
         "provider": provider_name,
-        "model": model_name if 'model_name' in locals() else "unknown",
+        "model": model_name,
         "quality_tier": quality_tier,
         "generation_time_ms": elapsed_ms,
         "refinement_count": 0,
@@ -474,6 +451,7 @@ async def analyze_and_redesign(
     }
     return {
         "scene_analysis": analysis.dict(),
+        "scene_understanding": scene.to_dict(),
         "design_plan": plan_dict,
         "visualization": vis_output,
         "thermal_impact": thermal,

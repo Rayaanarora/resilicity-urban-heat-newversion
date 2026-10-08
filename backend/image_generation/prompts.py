@@ -203,53 +203,94 @@ SDXL_NEGATIVE_PROMPT = (
 )
 
 
-def build_sdxl_inpainting_prompt(plan: SpatialDesignPlan, attempt: int = 0) -> str:
-    """Build a rich, photorealistic architectural prompt for local SDXL Inpainting.
-
-    Explicitly instructs the model to create visible, tangible physical objects and materials
-    in the masked areas (mature leafy trees, light-gray high-albedo road, permeable pavers, shade canopies)
-    while preserving perspective and architecture. Escalates on retries.
+def build_pass_sdxl_prompt(intervention_type: str, attempt: int = 0) -> str:
+    """Build a dedicated, intervention-specific prompt for autonomous multi-pass SDXL inpainting (Part M).
+    
+    Each pass focuses exclusively on synthesizing ONE specific resilient physical intervention,
+    instructing the model to make the modification visibly obvious and photorealistic while
+    strictly preserving perspective, architecture, and surrounding infrastructure.
+    Kept strictly under 75 CLIP tokens.
     """
-    elements = []
-    seen = set()
-    for iv in plan.interventions:
-        itype = getattr(iv, "type", "")
-        if itype in seen:
-            continue
-        seen.add(itype)
-        if itype == "tree_canopy":
-            elements.append("mature leafy street trees with wooden trunks and green shade canopies")
-        elif itype == "cool_pavement":
-            elements.append("solar-reflective light-gray roadway pavement with intact lane markings")
-        elif itype == "permeable_pave":
-            elements.append("light-gray interlocking permeable sidewalk pavers")
-        elif itype == "shade_structure":
-            elements.append("modern tensile fabric shade canopy on steel columns")
-        elif itype == "green_roof":
-            elements.append("lush vegetative green roof on flat rooftops")
-        elif itype == "cool_roof":
-            elements.append("bright solar-reflective cool roof coating")
-        if len(elements) >= 3:
-            break
+    if intervention_type == "tree_canopy":
+        if attempt == 0:
+            return (
+                "photorealistic urban street photograph, mature broad canopy green street trees rooted in "
+                "sidewalk planting pits, textured bark trunks, spreading leafy branches, natural cast shade, "
+                "preserving buildings, road geometry, vehicles, sharp focus"
+            )
+        elif attempt == 1:
+            return (
+                "high-quality architectural photo, prominent leafy green shade trees planted along sidewalk verge, "
+                "lush broad foliage, realistic wood trunks, grounded tree basins, crisp shadows, preserving architecture, 8k"
+            )
+        else:
+            return (
+                "award-winning urban landscape photo, mature green street trees lining pedestrian sidewalk, "
+                "dense natural leaf canopy, textured trunks, cooling cast shade, photorealistic streetscape, sharp focus"
+            )
 
-    interventions_clause = ", ".join(elements) if elements else "mature green street trees and light-gray cool pavement"
+    elif intervention_type == "shade_structure":
+        if attempt == 0:
+            return (
+                "photorealistic architectural installation, modern tensile fabric pedestrian shade canopy anchored to "
+                "sidewalk ground with slender steel columns, geometric sailcloth, crisp angled shadows, preserving buildings, sharp focus"
+            )
+        else:
+            return (
+                "architectural photograph of modern urban shade structure, light-toned tensile fabric canopy, "
+                "slender steel support posts grounded in pavement, clean design, natural daylight, sharp focus"
+            )
 
-    if attempt == 0:
-        prompt = (
-            f"photorealistic architectural street photograph, {interventions_clause}, "
-            "natural daylight, crisp cast shadows, sharp focus, 8k uhd, preserving buildings and street perspective"
-        )
-    elif attempt == 1:
-        prompt = (
-            f"professional architectural photograph of climate-resilient street, prominent {interventions_clause}, "
-            "vibrant leafy foliage, bright reflective pavement, natural sunlight, sharp focus, 8k"
-        )
-    else:
-        prompt = (
-            f"award-winning urban landscape photograph, transformative {interventions_clause}, "
-            "dense green shade trees, clean light cool roadway, authentic architectural streetscape, sharp focus"
-        )
+    elif intervention_type == "cool_pavement":
+        if attempt == 0:
+            return (
+                "transform asphalt roadway into realistic light-gray solar-reflective cool pavement surface, "
+                "high albedo material, preserving painted lane markings, crosswalks, curbs, vehicles, sharp focus"
+            )
+        else:
+            return (
+                "photorealistic street transformation, bright light-gray solar-reflective road coating, "
+                "clean smooth high-albedo road surface, intact painted traffic lane lines, authentic streetscape, sharp focus"
+            )
 
-    return prompt
+    elif intervention_type == "permeable_pave":
+        if attempt == 0:
+            return (
+                "replace pedestrian pavement with realistic light-tone interlocking permeable concrete pavers, "
+                "modular paving stones, narrow gravel drainage joints, preserving curbs, buildings, doors, sharp focus"
+            )
+        else:
+            return (
+                "architectural street renovation, high-quality light-gray modular permeable interlocking pavers "
+                "installed across pedestrian sidewalk, distinct paving units, crisp curb edges, sharp focus"
+            )
+
+    elif intervention_type in ("cool_roof", "green_roof"):
+        if intervention_type == "green_roof":
+            return (
+                "extensive vegetative green roof on flat building rooftop, lush sedum succulent plants, "
+                "gravel drainage border, preserving rooftop parapets and building geometry, sharp focus"
+            )
+        else:
+            return (
+                "solar-reflective bright white elastomeric cool roof coating on flat rooftop, "
+                "clean high-albedo membrane, preserving parapets and building architecture, sharp focus"
+            )
+
+    return (
+        "photorealistic urban streetscape modification, high-albedo resilient urban infrastructure, "
+        "natural daylight, preserving architecture and street perspective, sharp focus"
+    )
+
+
+def build_sdxl_inpainting_prompt(plan: SpatialDesignPlan, attempt: int = 0) -> str:
+    """Composite SDXL prompt for backward compatibility."""
+    if plan.interventions:
+        # Use primary intervention prompt
+        primary = plan.interventions[0].type
+        return build_pass_sdxl_prompt(primary, attempt=attempt)
+    return "photorealistic resilient urban streetscape with mature green street trees and light-gray cool pavement"
+
+
 
 

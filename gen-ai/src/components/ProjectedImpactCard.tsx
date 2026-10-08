@@ -13,14 +13,14 @@ export const ProjectedImpactCard: React.FC = () => {
           <span className="rc-card-header-label">PROJECTED IMPACT</span>
           <h3 className="text-xl font-bold text-slate-900 font-sans">Score delta</h3>
         </div>
-        <span className="text-xs font-mono font-semibold text-slate-400">RUN / 0248</span>
+        <span className="text-xs font-mono font-semibold text-teal-700">AUTONOMOUS SPATIAL RUN</span>
       </div>
 
       {/* Main Metric Comparison */}
       <div className="flex items-center justify-between py-2">
-        {/* Current Score */}
+        {/* Projected Score */}
         <div className="flex flex-col">
-          <span className="text-[11px] font-mono uppercase font-semibold text-slate-400">CURRENT</span>
+          <span className="text-[11px] font-mono uppercase font-semibold text-slate-400">PROJECTED</span>
           <span className="text-4xl font-black font-sans text-teal-700 tracking-tight">
             {heatMetrics.projectedScore.toFixed(1)}
           </span>
@@ -51,7 +51,7 @@ export const ProjectedImpactCard: React.FC = () => {
         </div>
 
         <div className="flex justify-between items-center text-slate-600">
-          <span>Active measures</span>
+          <span>Autonomous interventions applied</span>
           <span className="font-mono font-bold text-slate-800">
             {activeInterventionIds.length} / {interventions.length}
           </span>

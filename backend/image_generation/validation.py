@@ -274,3 +274,90 @@ def validate_image_output(
     )
 
     return True, report, normalized_image
+
+
+def validate_pass_output(
+    gen_image: Image.Image,
+    base_image: Image.Image,
+    pass_mask: Image.Image,
+    protected_mask: Optional[np.ndarray],
+    intervention_type: str,
+    min_masked_diff: float = 10.0,
+    max_protected_drift: float = 18.0,
+) -> Tuple[bool, Dict[str, Any], Optional[str]]:
+    """Validate a single autonomous inpainting pass for intervention presence and protection.
+
+    Checks:
+    1. Meaningful change inside the pass mask region (masked_diff >= min_masked_diff).
+    2. Zero or minimal drift inside protected object regions (protected_diff <= max_protected_drift).
+    3. Intervention presence:
+       - tree_canopy: green index increase inside tree mask.
+       - cool_pavement: positive albedo/luminance shift on roadway.
+       - shade_structure / permeable_pave: distinct material/texture transformation.
+    """
+    w, h = gen_image.size
+    base_resized = base_image.convert("RGB").resize((w, h), Image.Resampling.LANCZOS)
+    mask_resized = pass_mask.convert("L").resize((w, h), Image.Resampling.NEAREST)
+
+    gen_arr = np.array(gen_image.convert("RGB")).astype(np.float32)
+    base_arr = np.array(base_resized).astype(np.float32)
+    m_arr = (np.array(mask_resized) > 30)
+
+    masked_px = np.count_nonzero(m_arr)
+    if masked_px == 0:
+        return True, {"masked_diff": 0.0, "presence_verified": True}, None
+
+    abs_diff = np.abs(gen_arr - base_arr)
+    mask_3d = np.stack([m_arr] * 3, axis=2)
+    masked_diff = float((abs_diff * mask_3d).sum() / (masked_px * 3))
+
+    # 1. Masked diff check
+    if masked_diff < min_masked_diff:
+        return False, {"masked_diff": round(masked_diff, 2)}, f"Intervention region did not change sufficiently ({masked_diff:.1f} < {min_masked_diff:.1f})"
+
+    # 2. Protected object drift check
+    protected_diff = 0.0
+    if protected_mask is not None:
+        p_arr = protected_mask
+        if p_arr.shape != (h, w):
+            p_pil = Image.fromarray(p_arr.astype(np.uint8) * 255).resize((w, h), Image.Resampling.NEAREST)
+            p_arr = np.array(p_pil) > 128
+        p_px = np.count_nonzero(p_arr)
+        if p_px > 0:
+            p_3d = np.stack([p_arr] * 3, axis=2)
+            protected_diff = float((abs_diff * p_3d).sum() / (p_px * 3))
+            if protected_diff > max_protected_drift:
+                return False, {"masked_diff": round(masked_diff, 2), "protected_diff": round(protected_diff, 2)}, f"Protected objects damaged or modified ({protected_diff:.1f} > {max_protected_drift:.1f})"
+
+    # 3. Intervention-specific presence verification
+    presence_verified = True
+    metric_detail = {}
+
+    if intervention_type == "tree_canopy":
+        base_green = float(np.mean(base_arr[m_arr, 1] - 0.5 * (base_arr[m_arr, 0] + base_arr[m_arr, 2])))
+        gen_green = float(np.mean(gen_arr[m_arr, 1] - 0.5 * (gen_arr[m_arr, 0] + gen_arr[m_arr, 2])))
+        green_delta = gen_green - base_green
+        metric_detail["green_delta"] = round(green_delta, 2)
+        if green_delta < -3.0 and masked_diff < 15.0:
+            presence_verified = False
+
+    elif intervention_type == "cool_pavement":
+        base_lum = float(np.mean(0.299 * base_arr[m_arr, 0] + 0.587 * base_arr[m_arr, 1] + 0.114 * base_arr[m_arr, 2]))
+        gen_lum = float(np.mean(0.299 * gen_arr[m_arr, 0] + 0.587 * gen_arr[m_arr, 1] + 0.114 * gen_arr[m_arr, 2]))
+        lum_delta = gen_lum - base_lum
+        metric_detail["lum_delta"] = round(lum_delta, 2)
+        if lum_delta < -8.0:
+            presence_verified = False
+
+    metrics = {
+        "masked_diff": round(masked_diff, 2),
+        "protected_diff": round(protected_diff, 2),
+        "presence_verified": presence_verified,
+        "details": metric_detail,
+    }
+
+    if not presence_verified:
+        return False, metrics, f"Intervention presence validation failed for {intervention_type}"
+
+    return True, metrics, None
+

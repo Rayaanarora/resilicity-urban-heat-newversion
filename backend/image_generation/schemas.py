@@ -17,12 +17,16 @@ class SpatialInterventionSpec(BaseModel):
     """Rich spatial design specification for a single urban cooling intervention."""
     type: str = Field(..., description="Intervention type identifier (e.g. tree_canopy, cool_pavement)")
     target_region: str = Field(..., description="Physical surface or zone (e.g. sidewalk, road, roof)")
+    target_zone: Optional[str] = Field(default=None, description="Specific spatial zone (e.g. left_sidewalk, right_sidewalk, roadway)")
     priority: int = Field(default=1, description="Execution priority ranking (1 is highest)")
     coverage: float = Field(default=0.5, ge=0.05, le=1.0, description="Fraction of eligible surface to transform")
     placement: str = Field(..., description="Specific physical placement within the scene geometry")
     visual_design: str = Field(..., description="Visual styling, material characteristics, colors, and textures")
     reason: str = Field(..., description="Why this intervention is selected for this specific site")
+    evidence: List[str] = Field(default_factory=list, description="Spatial and environmental evidence justifying intervention")
+    utility_score: Optional[float] = Field(default=None, description="Decision ranking utility score")
     feasibility: float = Field(default=0.9, ge=0.0, le=1.0, description="Physical and urban feasibility score")
+    spatial_constraints: List[str] = Field(default_factory=list, description="Intervention-specific spatial constraints")
     title: Optional[str] = Field(default=None, description="Human readable intervention title")
     cooling_impact_c: float = Field(default=0.8, description="Estimated localized cooling in degrees Celsius")
     confidence: float = Field(default=0.85, description="Confidence in intervention placement and benefit")
@@ -30,12 +34,14 @@ class SpatialInterventionSpec(BaseModel):
 
 class SpatialDesignPlan(BaseModel):
     """Complete urban resilience architectural design specification."""
+    planner_source: str = Field(default="autonomous_spatial_planner", description="Source of design plan")
     site_summary: str = Field(..., description="Brief assessment of current site configuration and microclimate")
     heat_drivers: List[str] = Field(default_factory=list, description="Primary urban heat island causes identified in photo")
     constraints: List[str] = Field(default_factory=list, description="Physical, structural, and traffic constraints to respect")
     design_profile: DesignProfile = Field(default="balanced", description="Selected urban design strategy")
     interventions: List[SpatialInterventionSpec] = Field(default_factory=list, description="Planned interventions")
     overall_design_intent: str = Field(..., description="Cohesive urban redesign narrative for the generative model")
+    scene_understanding: Optional[Dict[str, Any]] = Field(default=None, description="Deep spatial scene understanding summary")
 
 
 class SceneAnalysis(BaseModel):

@@ -14,7 +14,7 @@ export const SubHeader: React.FC<SubHeaderProps> = ({ onExportClick }) => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="text-[11px] font-mono font-semibold tracking-widest text-slate-400 uppercase mb-1">
-            WORKSPACE <span className="text-slate-300">→</span> RUN / 0248
+            WORKSPACE <span className="text-slate-300">→</span> SPATIAL DESIGN RUN
           </div>
           <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">
             Heat-risk inspection
