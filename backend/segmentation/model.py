@@ -99,7 +99,7 @@ class SegFormerEngine:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    def segment_image(self, image: Image.Image) -> Dict[str, Any]:
+    def segment_image(self, image: Image.Image, include_raw_arrays: bool = True) -> Dict[str, Any]:
         """Perform semantic segmentation on a PIL Image and return structured result."""
         if not self.is_loaded or self.model is None or self.processor is None:
             raise RuntimeError(
@@ -220,7 +220,7 @@ class SegFormerEngine:
         masks_output.sort(key=lambda x: -x["areaPercentage"])
         protected_output.sort(key=lambda x: -x["percentage"])
 
-        return {
+        output = {
             "model": {
                 "name": self.model_name_or_path,
                 "source": self.source,
@@ -234,6 +234,10 @@ class SegFormerEngine:
             "source": "segformer",
             "masks": masks_output,
             "protected_objects": protected_output,
-            "raw_preds": raw_preds,
-            "protected_mask": combined_protected_mask,
         }
+
+        if include_raw_arrays:
+            output["raw_preds"] = raw_preds
+            output["protected_mask"] = combined_protected_mask
+
+        return output

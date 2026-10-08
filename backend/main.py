@@ -607,7 +607,9 @@ async def segment(file: UploadFile = File(...)):
         if len(content) > 15 * 1024 * 1024:
             raise HTTPException(413, "Image file too large (max 15 MB)")
         img = Image.open(io.BytesIO(content)).convert("RGB")
-        return seg_engine.segment_image(img)
+        res = seg_engine.segment_image(img, include_raw_arrays=False)
+        seg_engine.offload_to_cpu()
+        return res
     except HTTPException:
         raise
     except Exception as e:
