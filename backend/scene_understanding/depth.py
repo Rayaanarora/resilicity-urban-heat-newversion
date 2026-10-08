@@ -18,16 +18,18 @@ _DEPTH_PIPE = None
 
 
 def get_depth_pipeline():
-    """Lazily load lightweight depth pipeline on CPU or GPU."""
+    """Lazily load lightweight depth pipeline on CPU or GPU if enabled."""
     global _DEPTH_PIPE
     if _DEPTH_PIPE is not None:
         return _DEPTH_PIPE
 
+    if os.environ.get("USE_DEPTH_ANYTHING", "false").lower() != "true":
+        return None
+
     try:
         from transformers import pipeline
-        # Use CPU by default to keep GPU VRAM completely free for SDXL, or GPU if configured
         device = 0 if (torch.cuda.is_available() and os.environ.get("DEPTH_ON_GPU", "false").lower() == "true") else -1
-        logger.info("Initializing lightweight Depth-Anything-V2 pipeline (device=%s)...", device)
+        logger.info("Initializing Depth-Anything-V2 pipeline (device=%s)...", device)
         _DEPTH_PIPE = pipeline(
             task="depth-estimation",
             model="depth-anything/Depth-Anything-V2-Small-hf",

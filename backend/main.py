@@ -256,6 +256,7 @@ def health():
         "segmenter_device": seg_info["device"],
         "segmenter_source": seg_info["source"],
         "planner_available": planner_available(),
+        "gemini_configured": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
     }
 
 
@@ -340,6 +341,7 @@ async def analyze_and_redesign(
         active_sdxl = sdxl_provider or LocalSDXLInpaintingProvider.get_instance()
 
         try:
+            logger.info("Starting local redesign generation attempt 1 on %s", active_sdxl.gpu_name)
             edited_img, report, multi_pass_meta = await run_autonomous_multi_pass_redesign(
                 image=pil_img,
                 plan=plan,
@@ -353,13 +355,43 @@ async def analyze_and_redesign(
             )
             normalized_img = edited_img
             if report is not None and not report.is_valid:
-                gen_error = f"Validation rejected: {', '.join(report.warnings)}"
+                gen_error = f"Validation rejected attempt 1: {', '.join(report.warnings)}"
         except Exception as e:
-            logger.error("Multi-pass redesign error: %s", e, exc_info=True)
+            logger.error("Multi-pass redesign error attempt 1: %s", e, exc_info=True)
             gen_error = str(e)
             edited_img = None
-    else:
-        # Fallback to Gemini multimodal provider
+
+        # Retry local generation if attempt 1 failed or was rejected by validation
+        if edited_img is None or report is None or not report.is_valid:
+            logger.warning("Local SD generation attempt 1 unsuccessful (%s). Retrying local generation (attempt 2)...", gen_error)
+            try:
+                edited_img, report, multi_pass_meta = await run_autonomous_multi_pass_redesign(
+                    image=pil_img,
+                    plan=plan,
+                    seg_result=seg_res,
+                    sdxl=active_sdxl,
+                    scene_understanding=scene,
+                    quality_tier=quality_tier,
+                    save_debug=True,
+                    debug_dir=DEBUG_DIR,
+                    base_seed=1042,
+                )
+                normalized_img = edited_img
+                if report is not None and not report.is_valid:
+                    gen_error = f"Validation rejected retry: {', '.join(report.warnings)}"
+                else:
+                    gen_error = None
+            except Exception as e:
+                logger.error("Multi-pass redesign error on retry attempt 2: %s", e, exc_info=True)
+                gen_error = f"Local generation retry error: {e}"
+                edited_img = None
+
+        if edited_img is None or report is None or not report.is_valid:
+            logger.error("Local SD generation failed after retry: %s. Returning generation unavailable (zero silent fallback).", gen_error)
+
+    elif IMAGE_PROVIDER == "gemini":
+        # Gemini is explicitly selected as provider
+        provider_name = "gemini"
         gemini_prov = get_gemini_provider()
         base_prompt = build_redesign_prompt(plan)
         final_prompt = build_refinement_prompt(base_prompt, refinement_prompt) if refinement_prompt else base_prompt
@@ -491,9 +523,6 @@ async def refine_design(
         pil_img = Image.open(io.BytesIO(content)).convert("RGB")
     except Exception as e:
         raise HTTPException(400, f"Invalid image: {e}")
-
-    if not os.environ.get("GEMINI_API_KEY"):
-        raise HTTPException(501, "Design refinement is disabled: autonomous local SDXL pipeline operates locally without external API keys.")
 
     gemini_prov = get_gemini_provider()
     model_name = gemini_prov.get_model_for_tier(quality_tier)

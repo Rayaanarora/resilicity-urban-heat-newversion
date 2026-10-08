@@ -91,10 +91,10 @@ export const BeforeAfterPreview: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="rc-card-header-label">HERO GENERATIVE VISUALIZATION</span>
+            <span className="rc-card-header-label">RESILIENT STREETSCAPE REDESIGN</span>
             <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 font-bold border border-emerald-200 flex items-center gap-1">
               <Cpu className="w-3 h-3 text-emerald-600" />
-              Local SDXL Inpainting · RTX 3050
+              AI Resilient Concept · ML Thermal Impact
             </span>
           </div>
           <h3
@@ -102,7 +102,7 @@ export const BeforeAfterPreview: React.FC = () => {
               isFullscreen ? 'text-white' : 'text-slate-900'
             }`}
           >
-            Resilient Urban Redesign
+            Autonomous Resilient Urban Redesign
           </h3>
         </div>
 
@@ -401,6 +401,14 @@ export const BeforeAfterPreview: React.FC = () => {
         </div>
       </div>
 
+      {/* Distinction Note (Requirement 18) */}
+      <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl px-4 py-2.5 flex items-center justify-between text-[11px] text-amber-900 font-sans">
+        <span>
+          <strong>Concept Visualization:</strong> The rendered image is an AI-generated resilient streetscape concept. Thermal impact is quantitatively computed by the trained HistGradientBoosting ML model.
+        </span>
+        <span className="font-mono text-amber-700 font-semibold shrink-0 ml-3">ML ΔT Assessment</span>
+      </div>
+
       {/* Footer Info */}
       <div className="flex flex-wrap items-center justify-between gap-4 text-xs font-mono text-slate-500 pt-1">
         <div className="flex items-center gap-4">
@@ -415,7 +423,7 @@ export const BeforeAfterPreview: React.FC = () => {
         </div>
 
         <span className="text-[11px] text-slate-400">
-          Autonomous Generative AI · Local SDXL 1.0 Inpainting on RTX 3050 6GB
+          Autonomous Urban Planning · Local SD Inpainting on RTX 3050 6GB
         </span>
       </div>
     </div>

@@ -24,6 +24,9 @@ from .schemas import (
 )
 from .intent_parser import parse_refinement_intent
 from .validation import validate_image_output, validate_pass_output
+from .layout_engine import populate_intervention_explicit_geometry
+from .compositor import composite_geometric_draft
+from .harmonization import harmonize_intervention_crop
 
 __all__ = [
     "ImageEditingProvider",

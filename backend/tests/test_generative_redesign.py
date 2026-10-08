@@ -181,7 +181,8 @@ def test_health_endpoint_never_leaks_api_key(client):
 # ---------------------------------------------------------------------------
 # End-to-End API Redesign Tests with Mocked Gemini Provider
 # ---------------------------------------------------------------------------
-def test_analyze_and_redesign_with_mock_gemini(client):
+def test_analyze_and_redesign_with_mock_gemini(client, monkeypatch):
+    monkeypatch.setattr("main.IMAGE_PROVIDER", "gemini")
     fake_img = Image.new("RGB", (300, 200), color=(100, 120, 140))
     import numpy as np
     arr = np.random.randint(50, 220, (200, 300, 3), dtype=np.uint8)
@@ -208,7 +209,8 @@ def test_analyze_and_redesign_with_mock_gemini(client):
         assert payload["thermal_impact"]["totalCoolingReductionC"] > 0
 
 
-def test_analyze_and_redesign_handles_provider_failure_gracefully(client):
+def test_analyze_and_redesign_handles_provider_failure_gracefully(client, monkeypatch):
+    monkeypatch.setattr("main.IMAGE_PROVIDER", "gemini")
     with patch.object(
         GeminiImageEditingProvider,
         "edit",

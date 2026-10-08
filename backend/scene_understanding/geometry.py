@@ -186,3 +186,144 @@ def analyze_street_corridor(
         "left_sidewalk_mask": left_pave_mask,
         "right_sidewalk_mask": right_pave_mask,
     }
+
+
+def detect_roadway_material(
+    image: Image.Image,
+    road_mask: np.ndarray,
+) -> Dict[str, Any]:
+    """Analyze road surface texture and color to determine if it is historic cobblestone/stone setts
+
+    or standard asphalt roadway.
+
+    Cobblestones exhibit:
+    - High local Laplacian texture variance across road pixels
+    - Regular high-frequency gradient edges
+    - Warmer/earthen gray tone rather than uniform dark bitumen
+    """
+    if not np.any(road_mask):
+        return {
+            "material": "standard_asphalt",
+            "is_heritage": False,
+            "texture_energy": 0.0,
+            "confidence": 0.70,
+            "reason": "No roadway pixels detected.",
+        }
+
+    w, h = image.size
+    img_np = np.array(image.convert("RGB"))
+    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+
+    # Focus on central/lower portion of road where texture is clear
+    lower_road = road_mask.copy()
+    lower_road[:int(h * 0.45), :] = False
+
+    if not np.any(lower_road):
+        lower_road = road_mask
+
+    # Calculate Laplacian variance as texture energy measure
+    laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+    road_lap = laplacian[lower_road]
+    tex_var = float(np.var(road_lap)) if road_lap.size > 0 else 0.0
+
+    # Sobel gradient energy
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    grad_mag = np.sqrt(sobelx**2 + sobely**2)
+    road_grad = grad_mag[lower_road]
+    grad_mean = float(np.mean(road_grad)) if road_grad.size > 0 else 0.0
+
+    # Check color warmth/tone of road
+    road_rgb = img_np[lower_road]
+    mean_r = float(np.mean(road_rgb[:, 0])) if road_rgb.size > 0 else 100.0
+    mean_g = float(np.mean(road_rgb[:, 1])) if road_rgb.size > 0 else 100.0
+    mean_b = float(np.mean(road_rgb[:, 2])) if road_rgb.size > 0 else 100.0
+
+    # Threshold: historic cobblestone or stone sett pavement has high texture variance
+    is_heritage = bool(tex_var > 950.0 or grad_mean > 32.0)
+    mat_name = "historic_cobblestone" if is_heritage else "standard_asphalt"
+    reason = (
+        "High spatial frequency texture and inter-block relief detected on roadway surface, indicative of historic cobblestone or stone setts."
+        if is_heritage
+        else "Relatively uniform surface texture characteristic of standard asphalt bitumen roadway."
+    )
+
+    return {
+        "material": mat_name,
+        "is_heritage": is_heritage,
+        "texture_energy": round(tex_var, 1),
+        "gradient_mean": round(grad_mean, 1),
+        "confidence": 0.88,
+        "reason": reason,
+    }
+
+
+def analyze_vegetation_spatial_distribution(
+    vegetation_mask: np.ndarray,
+    left_sidewalk_mask: np.ndarray,
+    right_sidewalk_mask: np.ndarray,
+    road_mask: np.ndarray,
+    vanishing_point: Tuple[float, float, float],
+) -> Dict[str, Any]:
+    """Analyze spatial continuity and distribution of existing trees/canopy.
+
+    Distinguishes:
+    - clustered vs continuous distribution
+    - pedestrian shade coverage
+    - presence of shade gaps along walking corridors
+    """
+    h, w = vegetation_mask.shape
+    total_veg_px = int(np.count_nonzero(vegetation_mask))
+
+    if total_veg_px < 50:
+        return {
+            "canopy_continuity": 0.0,
+            "canopy_distribution": "absent",
+            "pedestrian_shade_coverage": 0.0,
+            "shade_gaps_pct": 100.0,
+            "canopy_continuity_score": 0.0,
+            "description": "Vegetative canopy is virtually absent along street corridors.",
+        }
+
+    # Evaluate horizontal distribution across street
+    y_coords, x_coords = np.nonzero(vegetation_mask)
+    x_std_norm = float(np.std(x_coords) / w)
+    y_mean_norm = float(np.mean(y_coords) / h)
+
+    # If y_mean_norm < 0.4, vegetation is in background / far end
+    # If x_std_norm is small (< 0.12), clustered in one spot
+    if x_std_norm < 0.12:
+        dist_type = "clustered_isolated"
+        continuity = 0.20
+    elif y_mean_norm < 0.40:
+        dist_type = "clustered_far_end"
+        continuity = 0.35
+    elif x_std_norm > 0.25:
+        dist_type = "distributed"
+        continuity = 0.70
+    else:
+        dist_type = "fragmented"
+        continuity = 0.45
+
+    # Check sidewalk overlap (canopy directly shading pedestrians)
+    sw_mask = left_sidewalk_mask | right_sidewalk_mask
+    sw_px = np.count_nonzero(sw_mask)
+    if sw_px > 0:
+        # Dilate vegetation slightly to approximate cast shade footprint
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+        veg_shade = cv2.dilate(vegetation_mask.astype(np.uint8), kernel)
+        sw_shaded_px = np.count_nonzero(veg_shade & sw_mask)
+        ped_shade_cov = float(sw_shaded_px / sw_px * 100.0)
+    else:
+        ped_shade_cov = 0.0
+
+    shade_gaps = max(0.0, 100.0 - ped_shade_cov)
+
+    return {
+        "canopy_continuity": round(continuity, 2),
+        "canopy_distribution": dist_type,
+        "pedestrian_shade_coverage": round(ped_shade_cov, 1),
+        "shade_gaps_pct": round(shade_gaps, 1),
+        "canopy_continuity_score": round(continuity, 2),
+        "description": f"Existing canopy is {dist_type} with {ped_shade_cov:.1f}% pedestrian sidewalk shade coverage.",
+    }

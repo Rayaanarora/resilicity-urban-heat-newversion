@@ -105,6 +105,16 @@ def build_geometrically_grounded_tree_mask(
     if depth_map is None:
         y_grad = np.linspace(1.0, 0.0, height)[:, None]  # 0 at top, 1 at bottom
         depth_map = 1.0 - y_grad  # 0 near (bottom), 1 far (top)
+    else:
+        depth_map = np.asarray(depth_map)
+
+    if depth_map.shape != (height, width):
+        if depth_map.ndim == 2 and depth_map.shape[0] == height and depth_map.shape[1] == 1:
+            depth_map = np.repeat(depth_map, width, axis=1)
+        else:
+            depth_img = Image.fromarray((np.clip(depth_map, 0.0, 1.0) * 255).astype(np.uint8))
+            depth_img = depth_img.resize((width, height), Image.Resampling.BILINEAR)
+            depth_map = np.array(depth_img).astype(np.float32) / 255.0
 
     # Filter sidewalk mask by target zone if specified (left vs right)
     active_sw = sidewalk_mask.copy()
