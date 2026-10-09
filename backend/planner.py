@@ -24,6 +24,8 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from PIL import Image
 
 from image_generation.schemas import (
+    DesignCritique,
+    DesignIntent,
     DesignProfile,
     ExpectedImpactMetrics,
     HeatDriverDiagnosis,
@@ -442,6 +444,218 @@ def determine_strategy_package(
     )
 
 
+def synthesize_design_intent(
+    scene: SceneUnderstanding,
+    surfaces: Dict[str, float],
+    drivers: Optional[List[HeatDriverDiagnosis]] = None,
+    design_profile: str = "balanced",
+) -> DesignIntent:
+    """Autonomous Design Strategist (Design Intelligence V2).
+
+    Synthesizes a structured DesignIntent object answering:
+    A. WHY is this street hot?
+    B. WHAT is the primary design problem?
+    C. WHO is most exposed?
+    D. WHAT physical mechanism should the redesign change?
+    E. WHAT design strategy best addresses that mechanism?
+    F. WHAT should NOT be changed?
+    G. WHICH interventions are acceptable?
+    H. WHICH interventions are explicitly rejected?
+    I. WHAT spatial pattern should the interventions form?
+    """
+    if drivers is None:
+        drivers = diagnose_heat_drivers(scene, surfaces)
+
+    geom = scene.street_geometry
+    ls = scene.left_sidewalk
+    rs = scene.right_sidewalk
+    road = scene.roadway
+    road_mat = scene.roadway_material or {}
+    veg_dist = scene.vegetation_distribution or {}
+
+    wider_sw = ls if ls.available_width_proxy >= rs.available_width_proxy else rs
+    target_zone = wider_sw.zone_name
+    is_heritage = road_mat.get("is_heritage", False)
+
+    # 1. Evaluate dominant physical heat mechanisms
+    primary_mechanisms = []
+    for d in drivers[:3]:
+        if d.driver in ("pedestrian_solar_exposure", "insufficient_pedestrian_shade", "high_solar_insolation"):
+            primary_mechanisms.append("direct_solar_exposure")
+            primary_mechanisms.append("insufficient_pedestrian_shade")
+        elif d.driver in ("large_exposed_roadway", "dark_high_absorption_material"):
+            primary_mechanisms.append("low_albedo_heat_absorption")
+        elif d.driver in ("insufficient_permeable_vegetated_ground", "sparse_existing_canopy"):
+            primary_mechanisms.append("excessive_impervious_surface")
+            primary_mechanisms.append("vegetative_canopy_deficit")
+
+    if not primary_mechanisms:
+        primary_mechanisms = ["direct_solar_exposure", "insufficient_pedestrian_shade", "excessive_impervious_surface"]
+    dominant_heat_mechanisms = list(dict.fromkeys(primary_mechanisms))
+
+    # 2. Can sidewalk accommodate in-ground trees?
+    can_plant_trees = (
+        wider_sw.available_width_proxy >= 0.10
+        or wider_sw.relative_area_pct >= 0.8
+        or surfaces.get("pavement", 0.0) >= 1.0
+        or surfaces.get("road", 0.0) >= 15.0
+    )
+
+    # 3. Preservation Requirements
+    preservation_requirements = [
+        "preserve roadway geometry and active vehicular traffic lanes",
+        "preserve building facades, windowpanes, and storefront signage",
+        "preserve active vehicles, pedestrians, cyclists, and transit flow",
+        "preserve street utility poles, streetlights, and traffic infrastructure",
+        "preserve unimpeded pedestrian circulation and building entrance clearances",
+    ]
+    if is_heritage:
+        preservation_requirements.append(
+            f"strictly preserve distinctive {road_mat.get('material', 'historic_cobblestone').replace('_', ' ')} roadway heritage without synthetic coatings"
+        )
+
+    # 4. Hard Constraints
+    hard_constraints = [
+        "do not obstruct active vehicular lanes with trees or structures",
+        "do not block building entrances, doors, or storefront sightlines",
+        "do not place interventions over utility poles, streetlights, or vehicles",
+        "do not create continuous raised barriers across pedestrian circulation",
+    ]
+
+    # 5. Soft Constraints
+    soft_constraints = [
+        "space trees 8-10m in perspective to ensure continuous canopy overlap",
+        "maintain minimum 1.5m clear pedestrian walking path along sidewalk",
+        "align planting pits with curbside rhythm and depth recession",
+    ]
+
+    # 6. Hard Negative Rules (Injected into diffusion negative prompt)
+    hard_negative_rules = [
+        "planter box",
+        "giant planter",
+        "raised planter",
+        "rectangular flower box",
+        "concrete barrier",
+        "flower bed",
+        "flower strips",
+        "hedge wall",
+        "continuous barrier",
+        "pedestrianization",
+        "road narrowing",
+        "arbitrary street furniture",
+        "decorative landscaping without shade",
+        "bare branches",
+        "autumn",
+        "dead tree",
+        "winter",
+        "distorted building",
+        "indoor tiles",
+        "plastic foliage",
+    ]
+
+    # 7. Mechanism-first Design Strategy Determination
+    if can_plant_trees:
+        primary_objective = (
+            f"Establish a continuous pedestrian shade corridor along {target_zone.replace('_', ' ')} "
+            f"without reducing roadway capacity."
+        )
+        secondary_objectives = [
+            "increase living vegetative canopy for evapotranspirative cooling",
+            "enhance pedestrian thermal comfort through direct overhead solar interception",
+            "increase permeable ground infiltration where feasible",
+        ]
+        acceptable_interventions = [
+            "mature street trees",
+            "porous sidewalk tree planting pits",
+            "permeable interlocking sidewalk pavers",
+        ]
+        rejected_interventions = [
+            "giant raised planter boxes (obstructs pedestrian movement)",
+            "decorative flower strips without shade (fails to mitigate pedestrian heat strain)",
+            "continuous hedge walls (creates pedestrian barrier)",
+            "pedestrianization / road narrowing (conflicts with active traffic corridor)",
+        ]
+        if is_heritage:
+            rejected_interventions.append("synthetic cool-pavement coating on roadway (violates heritage cobblestone preservation)")
+        desired_spatial_pattern = "linear tree corridor"
+        desired_continuity = 0.86
+        ped_prio = 0.94
+        shade_prio = 0.96
+        veg_prio = 0.85
+        perm_prio = 0.65
+        alb_prio = 0.40 if is_heritage else 0.70
+        visual_char = "mature broad-canopy street trees with natural bark trunks in flush sidewalk pits"
+        rationale = (
+            f"Pedestrian solar exposure ({wider_sw.solar_exposure:.2f}) and existing canopy deficit "
+            f"({veg_dist.get('pedestrian_shade_coverage', 0.0):.1f}% shade) make shading and evapotranspiration the dominant resilience mechanisms. "
+            f"{target_zone.replace('_', ' ').capitalize()} has adequate sidewalk width ({wider_sw.available_width_proxy:.2f}) for in-ground planting. "
+            f"A linear tree corridor is preferred over architectural tensile shade because living trees provide both shade and biological cooling."
+        )
+    else:
+        primary_objective = (
+            f"Provide immediate overhead solar interception for pedestrians along {target_zone.replace('_', ' ')} "
+            f"while preserving clear pedestrian walking passage."
+        )
+        secondary_objectives = [
+            "reduce localized pedestrian solar exposure",
+            "maintain unimpeded sidewalk circulation on constrained walkway",
+            "enhance ground breathability with permeable pavers",
+        ]
+        acceptable_interventions = [
+            "architectural tensile shade canopy",
+            "slender structural steel columns",
+            "permeable interlocking pavers",
+        ]
+        rejected_interventions = [
+            "deep-root mature street trees (sidewalk width too narrow, obstructs walkway)",
+            "planter boxes and raised barriers (restricts pedestrian circulation)",
+            "decorative flower beds (provides zero overhead shade)",
+        ]
+        if is_heritage:
+            rejected_interventions.append("synthetic cool-pavement coating on roadway (violates heritage cobblestone preservation)")
+        desired_spatial_pattern = "architectural shade corridor"
+        desired_continuity = 0.80
+        ped_prio = 0.92
+        shade_prio = 0.95
+        veg_prio = 0.25
+        perm_prio = 0.55
+        alb_prio = 0.40 if is_heritage else 0.65
+        visual_char = "modern light-toned tensile fabric sailcloth anchored to slender structural columns"
+        rationale = (
+            f"Sidewalk width ({wider_sw.available_width_proxy:.2f}) is too constrained for tree root basins without obstructing pedestrian movement. "
+            f"An overhead architectural tensile shade structure provides immediate high-density solar interception without consuming ground circulation space."
+        )
+
+    target_zones = [target_zone]
+    if not is_heritage and road.relative_area_pct >= 15.0 and not any("cool-pavement" in r for r in rejected_interventions):
+        secondary_objectives.append("apply high-albedo solar-reflective coating to roadway lanes while preserving traffic markings")
+        acceptable_interventions.append("high-albedo solar-reflective roadway coating")
+        target_zones.append("roadway")
+
+    return DesignIntent(
+        primary_objective=primary_objective,
+        secondary_objectives=secondary_objectives,
+        dominant_heat_mechanisms=dominant_heat_mechanisms,
+        target_zones=target_zones,
+        pedestrian_priority=ped_prio,
+        shade_priority=shade_prio,
+        vegetation_priority=veg_prio,
+        permeability_priority=perm_prio,
+        albedo_priority=alb_prio,
+        preservation_requirements=preservation_requirements,
+        hard_constraints=hard_constraints,
+        soft_constraints=soft_constraints,
+        acceptable_interventions=acceptable_interventions,
+        rejected_interventions=rejected_interventions,
+        desired_spatial_pattern=desired_spatial_pattern,
+        desired_continuity=desired_continuity,
+        visual_character=visual_char,
+        confidence=round(scene.confidence, 2),
+        rationale=rationale,
+        hard_negative_rules=hard_negative_rules,
+    )
+
+
 def compute_intervention_utility(
     itype: str,
     scene: SceneUnderstanding,
@@ -768,9 +982,26 @@ def generate_spatial_plan(
     # Step 4: Strategy Package Determination
     strategy_name, strategy_rationale = determine_strategy_package(scene, drivers, surfaces)
 
+    # Step 4b: Autonomous Design Strategist (Design Intelligence V2)
+    design_intent = synthesize_design_intent(
+        scene=scene,
+        surfaces=surfaces,
+        drivers=drivers,
+        design_profile=profile,
+    )
+
     # Step 5: Candidate Generation
     candidates: List[Dict[str, Any]] = []
     rejected_candidates: List[Dict[str, Any]] = []
+
+    # Record rejected forms from DesignIntent directly
+    for rej_form in design_intent.rejected_interventions:
+        rejected_candidates.append({
+            "type": rej_form.split()[0].lower(),
+            "target_zone": design_intent.target_zones[0] if design_intent.target_zones else "sidewalk",
+            "reason": rej_form,
+            "conflict": "design_intent_prohibition",
+        })
 
     # Check Left Sidewalk Tree Canopy
     can_plant_left = (ls.relative_area_pct >= 1.0 or ls.available_width_proxy >= 0.05 or surfaces.get("pavement", 0.0) >= 1.0 or surfaces.get("road", 0.0) >= 15.0)
@@ -1015,7 +1246,7 @@ def generate_spatial_plan(
     # Step 10: Populate Explicit Geometry for Renderer
     from image_generation.layout_engine import populate_intervention_explicit_geometry
     for spec in final_specs:
-        populate_intervention_explicit_geometry(spec, image, seg_result, scene)
+        populate_intervention_explicit_geometry(spec, image, seg_result, scene, design_intent=design_intent)
 
     # Step 11: Build Constraints & Design Narrative
     constraints = list(scene.design_constraints)
@@ -1095,6 +1326,7 @@ def generate_spatial_plan(
         design_profile=design_profile or "balanced",
         interventions=final_specs,
         overall_design_intent=overall_intent,
+        design_intent=design_intent,
         scene_understanding=scene.to_dict(),
         site_diagnosis=site_diagnosis_data,
         dominant_heat_drivers=drivers,

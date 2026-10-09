@@ -110,6 +110,46 @@ class SpatialInterventionSpec(BaseModel):
     geometry_metadata: Optional[Dict[str, Any]] = Field(default=None, description="Auxiliary geometric layout attributes")
 
 
+class DesignIntent(BaseModel):
+    """Structured design intent representation for autonomous urban heat resilience."""
+    primary_objective: str = Field(..., description="High-level primary urban design and cooling objective")
+    secondary_objectives: List[str] = Field(default_factory=list, description="Complementary resilience and comfort objectives")
+    dominant_heat_mechanisms: List[str] = Field(default_factory=list, description="Target physics mechanisms: direct_solar_exposure, insufficient_pedestrian_shade, excessive_impervious_surface, low_albedo_trapping")
+    target_zones: List[str] = Field(default_factory=list, description="Designated spatial zones for intervention (e.g. left_sidewalk, roadway)")
+    pedestrian_priority: float = Field(default=0.9, ge=0.0, le=1.0, description="Pedestrian thermal protection priority score")
+    shade_priority: float = Field(default=0.9, ge=0.0, le=1.0, description="Overhead solar interception priority score")
+    vegetation_priority: float = Field(default=0.8, ge=0.0, le=1.0, description="Living vegetative canopy priority score")
+    permeability_priority: float = Field(default=0.6, ge=0.0, le=1.0, description="Ground water infiltration and breathability priority score")
+    albedo_priority: float = Field(default=0.5, ge=0.0, le=1.0, description="Surface solar reflectance priority score")
+    preservation_requirements: List[str] = Field(default_factory=list, description="Strict architectural, vehicular, and pedestrian circulation preservation rules")
+    hard_constraints: List[str] = Field(default_factory=list, description="Inviolable physical boundaries and traffic clearances")
+    soft_constraints: List[str] = Field(default_factory=list, description="Desirable design conditions and spacing guidelines")
+    acceptable_interventions: List[str] = Field(default_factory=list, description="Explicitly approved intervention types and architectural forms")
+    rejected_interventions: List[str] = Field(default_factory=list, description="Explicitly forbidden intervention forms with justification")
+    desired_spatial_pattern: str = Field(default="linear tree corridor", description="Spatial typology: linear tree corridor, alternating shade nodes, distributed canopy, etc.")
+    desired_continuity: float = Field(default=0.85, ge=0.0, le=1.0, description="Required spatial continuity along target corridor")
+    visual_character: str = Field(default="photorealistic natural urban vegetation", description="Target material and architectural character")
+    confidence: float = Field(default=0.90, ge=0.0, le=1.0, description="Confidence in the design strategy")
+    rationale: str = Field(default="", description="Deep causal reasoning explaining why this strategy solves the site's heat drivers")
+    hard_negative_rules: List[str] = Field(default_factory=list, description="Forbidden architectural forms to inject into renderer negative prompts")
+
+
+class DesignCritique(BaseModel):
+    """Quantitative and semantic critique of a generated redesign against DesignIntent."""
+    passed: bool = Field(default=True, description="Whether the generation satisfies the design intent")
+    overall_score: float = Field(default=0.85, ge=0.0, le=1.0, description="Combined quality and compliance score")
+    intervention_presence_score: float = Field(default=0.9, ge=0.0, le=1.0, description="Presence of intended physical intervention (foliage/canopy/materials)")
+    spatial_compliance_score: float = Field(default=0.9, ge=0.0, le=1.0, description="Correct zone, grounded base, proper clearance")
+    preservation_score: float = Field(default=0.95, ge=0.0, le=1.0, description="Preservation of protected vehicles, facades, people, and roadway")
+    coherence_score: float = Field(default=0.85, ge=0.0, le=1.0, description="Perspective consistency, spacing rhythm, and natural integration")
+    heat_strategy_score: float = Field(default=0.9, ge=0.0, le=1.0, description="Fulfillment of functional microclimate mechanism (useful shade vs decorative)")
+    unauthorized_change_score: float = Field(default=0.95, ge=0.0, le=1.0, description="Absence of planters, barriers, altered buildings, or arbitrary landscaping")
+    failure_reasons: List[str] = Field(default_factory=list, description="Specific identified defects if critique failed")
+    retry_recommendation: Optional[str] = Field(default=None, description="Intelligent parameter/prompt adjustment for retry pass")
+    intervention_type: Optional[str] = Field(default=None, description="Target intervention analyzed")
+    attempt_number: int = Field(default=1, description="Generation attempt number")
+
+
 class SpatialDesignPlan(BaseModel):
     """Complete urban resilience architectural design specification."""
     planner_source: str = Field(default="autonomous_spatial_planner", description="Source of design plan")
@@ -119,6 +159,8 @@ class SpatialDesignPlan(BaseModel):
     design_profile: DesignProfile = Field(default="balanced", description="Selected urban design strategy")
     interventions: List[SpatialInterventionSpec] = Field(default_factory=list, description="Planned interventions")
     overall_design_intent: str = Field(..., description="Cohesive urban redesign narrative for the generative model")
+    design_intent: Optional[DesignIntent] = Field(default=None, description="Structured autonomous DesignIntent object")
+    design_critique: Optional[DesignCritique] = Field(default=None, description="Quality, compliance, and preservation critique of the final design")
     scene_understanding: Optional[Dict[str, Any]] = Field(default=None, description="Deep spatial scene understanding summary")
 
     # Autonomous Design Intelligence Upgrade
@@ -212,3 +254,5 @@ class UnifiedRedesignResponse(BaseModel):
     visualization: VisualizationOutput
     thermal_impact: Dict[str, Any]
     validation: ValidationReport
+    design_intent: Optional[DesignIntent] = None
+    design_critique: Optional[DesignCritique] = None

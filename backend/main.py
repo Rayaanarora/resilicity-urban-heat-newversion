@@ -338,6 +338,8 @@ async def analyze_and_redesign(
                 compute_thermal_impact(surfaces, [i.dict() for i in plan.interventions]),
             ),
             "validation": cached_entry["validation"],
+            "design_intent": plan.design_intent.dict() if getattr(plan, "design_intent", None) else None,
+            "design_critique": plan.design_critique.dict() if getattr(plan, "design_critique", None) else None,
         }
 
     # 5. Generative Redesign via Autonomous Multi-Pass SD 1.5 Inpainting (Part 18, 19, 20)
@@ -470,6 +472,13 @@ async def analyze_and_redesign(
         }
         GENERATION_CACHE[cache_key] = cache_entry
 
+        plan_dict = plan.dict()
+        critique_obj = None
+        if "multi_pass_meta" in locals() and multi_pass_meta and multi_pass_meta.get("design_critique"):
+            critique_obj = multi_pass_meta.get("design_critique")
+        elif getattr(plan, "design_critique", None):
+            critique_obj = plan.design_critique.dict()
+
         return {
             "scene_analysis": analysis.dict(),
             "scene_understanding": scene.to_dict(),
@@ -477,6 +486,8 @@ async def analyze_and_redesign(
             "visualization": vis_output,
             "thermal_impact": thermal,
             "validation": report.dict(),
+            "design_intent": plan.design_intent.dict() if getattr(plan, "design_intent", None) else None,
+            "design_critique": critique_obj,
         }
 
     # If generation failed or was rejected by validation after all attempts (never fake result!)
@@ -492,6 +503,13 @@ async def analyze_and_redesign(
         "refinement_count": 0,
         "error_message": gen_error or "Autonomous image generation rejected by validation.",
     }
+    plan_dict = plan.dict()
+    critique_obj = None
+    if "multi_pass_meta" in locals() and multi_pass_meta and multi_pass_meta.get("design_critique"):
+        critique_obj = multi_pass_meta.get("design_critique")
+    elif getattr(plan, "design_critique", None):
+        critique_obj = plan.design_critique.dict()
+
     return {
         "scene_analysis": analysis.dict(),
         "scene_understanding": scene.to_dict(),
@@ -506,6 +524,8 @@ async def analyze_and_redesign(
             "checks_passed": [],
             "warnings": [gen_error or "Image generation failed"],
         },
+        "design_intent": plan.design_intent.dict() if getattr(plan, "design_intent", None) else None,
+        "design_critique": critique_obj,
     }
 
 

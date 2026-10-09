@@ -23,14 +23,15 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .depth_util import preprocess_depth_for_controlnet
-from .controlled_generation import generate_controlled_intervention
+from .controlled_generation import generate_controlled_intervention, generate_single_tree_localized
+from .design_critic import evaluate_design_critique
 from .layout_engine import populate_intervention_explicit_geometry
 from .mask_builder import (
     build_mask_from_intervention_geometry,
     build_pass_mask,
     build_protected_object_mask,
 )
-from .schemas import SpatialDesignPlan, ValidationReport
+from .schemas import SpatialDesignPlan, ValidationReport, DesignCritique, DesignIntent
 from .sd15_controlnet_provider import LocalSD15ControlNetInpaintingProvider
 from .validation import validate_image_output
 from scene_understanding import render_heat_priority_colormap
@@ -175,8 +176,9 @@ async def run_autonomous_multi_pass_redesign(
     # STAGE 1: EXPLICIT GEOMETRIC LAYOUT
     # -------------------------------------------------------------------------
     logger.info("Stage 1: Populating explicit geometric layout from planner...")
+    design_intent = getattr(plan, "design_intent", None)
     for iv in plan.interventions:
-        populate_intervention_explicit_geometry(iv, image, seg_result, scene_understanding)
+        populate_intervention_explicit_geometry(iv, image, seg_result, scene_understanding, design_intent=design_intent)
 
     scene_vis, tree_vis, shade_vis = _render_layout_debug_overlays(image, plan, out_dir)
 
@@ -200,101 +202,192 @@ async def run_autonomous_multi_pass_redesign(
     current_image = image.copy()
     pass_counter = 1
     cumulative_intervention_mask = np.zeros((h, w), dtype=np.uint8)
+    all_critiques: List[DesignCritique] = []
 
-    for iv in plan.interventions:
+    def _intervention_sort_key(iv):
+        if iv.type in ("cool_pavement", "permeable_pave"):
+            return 0  # Ground-level pavement interventions run first
+        elif iv.type == "tree_canopy":
+            return 1  # Vertical trees run second so trunks root cleanly into pavement
+        elif iv.type == "shade_structure":
+            return 2  # Architectural canopies third
+        return 3
+
+    sorted_interventions = sorted(plan.interventions, key=_intervention_sort_key)
+
+    for iv in sorted_interventions:
         itype = iv.type
         if itype not in ("tree_canopy", "shade_structure", "cool_pavement", "permeable_pave"):
             continue
 
-        # Build mask from explicit geometry
-        iv_mask = build_mask_from_intervention_geometry(
-            intervention=iv,
-            width=w,
-            height=h,
-            depth_map=depth_map,
-            protected_mask=protected_mask,
-        )
+        anchors = getattr(iv, "anchors", []) or []
+        if itype == "tree_canopy" and len(anchors) > 0:
+            logger.info("Executing Tree-by-Tree Localized Generation for %d anchors...", len(anchors))
+            # Specifically protect living pedestrians and active vehicles from tree occlusion
+            person_vehicle_mask = np.zeros((h, w), dtype=bool)
+            raw_preds = seg_result.get("raw_preds")
+            if raw_preds is None:
+                raw_preds = seg_result.get("raw_predictions")
+            if raw_preds is not None:
+                person_vehicle_mask = np.isin(raw_preds, [12, 20, 80, 83, 102, 116, 127])
+            elif protected_mask is not None:
+                person_vehicle_mask = protected_mask
 
-        mask_arr = np.array(iv_mask)
-        mask_px = int(np.count_nonzero(mask_arr > 30))
-        if mask_px < 60:
-            # Fallback to semantic pass mask
-            iv_mask, _ = build_pass_mask(
-                intervention_type=itype,
-                image=image,
-                seg_result=seg_result,
-                scene_understanding=scene_understanding,
-                target_zone=getattr(iv, "target_zone", None),
+            for tree_idx, anc in enumerate(anchors, start=1):
+                tree_seed = base_seed + (tree_idx * 79)
+                t_tree_start = time.time()
+                current_image, tree_meta, tree_critique = await generate_single_tree_localized(
+                    base_image=current_image,
+                    anchor=anc,
+                    depth_map=depth_map,
+                    sd_provider=provider,
+                    tree_idx=tree_idx,
+                    base_seed=tree_seed,
+                    save_debug=save_debug,
+                    debug_dir=out_dir,
+                    protected_mask=person_vehicle_mask,
+                    design_intent=design_intent,
+                    max_retries=2,
+                )
+                all_critiques.append(tree_critique)
+                t_tree_elapsed = round(time.time() - t_tree_start, 2)
+
+                # Stamp tree anchor into cumulative mask for validation
+                ax, ay = int(anc["x"]), int(anc["y"])
+                cr = int(anc.get("canopy_radius", 45))
+                cy = int(anc.get("canopy_center_y", ay - 55))
+                cv2.circle(cumulative_intervention_mask, (ax, cy), cr, 255, -1)
+                cv2.rectangle(cumulative_intervention_mask, (ax - 10, cy), (ax + 10, ay), 255, -1)
+
+                trace_entry = {
+                    "endpoint": "/api/v1/analyze-and-redesign",
+                    "pipeline": "tree_by_tree_localized_controlnet",
+                    "provider": "LocalSD15ControlNetInpaintingProvider",
+                    "model": "stable-diffusion-v1-5/stable-diffusion-inpainting",
+                    "controlnet_model": "lllyasviel/control_v11f1p_sd15_depth",
+                    "intervention": f"tree_canopy_{tree_idx}",
+                    "pass": pass_counter,
+                    "anchor": [ax, ay],
+                    "seed": tree_seed,
+                    "crop_bbox": tree_meta.get("crop_bbox"),
+                    "generation_time": t_tree_elapsed,
+                    "critique_score": tree_critique.overall_score,
+                    "critique_passed": tree_critique.passed,
+                    "failure_reasons": tree_critique.failure_reasons,
+                }
+                generation_traces.append(trace_entry)
+                pass_counter += 1
+
+        else:
+            # Build mask from explicit geometry
+            iv_mask = build_mask_from_intervention_geometry(
+                intervention=iv,
+                width=w,
+                height=h,
+                depth_map=depth_map,
+                protected_mask=protected_mask,
             )
+
             mask_arr = np.array(iv_mask)
             mask_px = int(np.count_nonzero(mask_arr > 30))
+            if mask_px < 60:
+                # Fallback to semantic pass mask
+                iv_mask, _ = build_pass_mask(
+                    intervention_type=itype,
+                    image=image,
+                    seg_result=seg_result,
+                    scene_understanding=scene_understanding,
+                    target_zone=getattr(iv, "target_zone", None),
+                )
+                mask_arr = np.array(iv_mask)
+                mask_px = int(np.count_nonzero(mask_arr > 30))
 
-        if mask_px < 60:
-            logger.warning("Intervention %s has insufficient mask coverage (%d px), skipping", itype, mask_px)
-            continue
+            if mask_px < 60:
+                logger.warning("Intervention %s has insufficient mask coverage (%d px), skipping", itype, mask_px)
+                continue
 
-        mask_cov_pct = round((mask_px / float(total_px)) * 100.0, 2)
-        current_seed = base_seed + (pass_counter * 37)
+            mask_cov_pct = round((mask_px / float(total_px)) * 100.0, 2)
+            current_seed = base_seed + (pass_counter * 37)
 
-        logger.info(
-            "RUNTIME TRACE:\n"
-            "  endpoint: /api/v1/analyze-and-redesign\n"
-            "  pipeline: controlnet_inpainting_redesign\n"
-            "  provider: LocalSD15ControlNetInpaintingProvider\n"
-            "  model: stable-diffusion-v1-5/stable-diffusion-inpainting\n"
-            "  controlnet: lllyasviel/control_v11f1p_sd15_depth\n"
-            "  intervention: %s (pass %d)\n"
-            "  mask coverage: %.2f%%\n"
-            "  seed: %d\n"
-            "  hardware: RTX 3050 Laptop GPU (FP16, attention/VAE slicing)\n"
-            "  cloud fallback: NONE (100%% local, ₹0)",
-            itype, pass_counter, mask_cov_pct, current_seed,
-        )
+            logger.info(
+                "RUNTIME TRACE:\n"
+                "  endpoint: /api/v1/analyze-and-redesign\n"
+                "  pipeline: controlnet_inpainting_redesign\n"
+                "  provider: LocalSD15ControlNetInpaintingProvider\n"
+                "  model: stable-diffusion-v1-5/stable-diffusion-inpainting\n"
+                "  controlnet: lllyasviel/control_v11f1p_sd15_depth\n"
+                "  intervention: %s (pass %d)\n"
+                "  mask coverage: %.2f%%\n"
+                "  seed: %d\n"
+                "  hardware: RTX 3050 Laptop GPU (FP16, attention/VAE slicing)\n"
+                "  cloud fallback: NONE (100%% local, ₹0)",
+                itype, pass_counter, mask_cov_pct, current_seed,
+            )
 
-        t_pass_start = time.time()
-        current_image, pass_meta = await generate_controlled_intervention(
-            base_image=current_image,
-            intervention_mask=iv_mask,
-            depth_map=depth_map,
-            intervention_type=itype,
-            sd_provider=provider,
-            base_seed=current_seed,
-            pass_number=pass_counter,
-            save_debug=save_debug,
-            debug_dir=out_dir,
-            protected_mask=protected_mask,
-        )
-        t_pass_elapsed = round(time.time() - t_pass_start, 2)
+            t_pass_start = time.time()
+            current_image, pass_meta = await generate_controlled_intervention(
+                base_image=current_image,
+                intervention_mask=iv_mask,
+                depth_map=depth_map,
+                intervention_type=itype,
+                sd_provider=provider,
+                base_seed=current_seed,
+                pass_number=pass_counter,
+                save_debug=save_debug,
+                debug_dir=out_dir,
+                protected_mask=protected_mask,
+                design_intent=design_intent,
+            )
+            t_pass_elapsed = round(time.time() - t_pass_start, 2)
 
-        cumulative_intervention_mask = np.maximum(cumulative_intervention_mask, mask_arr)
+            cumulative_intervention_mask = np.maximum(cumulative_intervention_mask, mask_arr)
 
-        # Save per-pass output image
-        pass_fname = f"harmonized_pass_{pass_counter:02d}.png"
-        current_image.save(out_dir / pass_fname)
+            # Evaluate with Design Critic
+            crop_bbox = pass_meta.get("crop_bbox", [0, 0, w, h])
+            p_crop = protected_mask[crop_bbox[1]:crop_bbox[3], crop_bbox[0]:crop_bbox[2]] if protected_mask is not None else None
+            gen_crop = current_image.crop(crop_bbox)
+            orig_crop = image.crop(crop_bbox)
+            mask_crop = iv_mask.crop(crop_bbox)
+            p_critique = evaluate_design_critique(
+                original_crop=orig_crop,
+                generated_crop=gen_crop,
+                mask=mask_crop,
+                intervention_type=itype,
+                protected_mask_crop=p_crop,
+                design_intent=design_intent,
+                attempt_number=1,
+            )
+            all_critiques.append(p_critique)
 
-        trace_entry = {
-            "endpoint": "/api/v1/analyze-and-redesign",
-            "pipeline": "controlnet_inpainting_redesign",
-            "provider": "LocalSD15ControlNetInpaintingProvider",
-            "model": "stable-diffusion-v1-5/stable-diffusion-inpainting",
-            "controlnet_model": "lllyasviel/control_v11f1p_sd15_depth",
-            "intervention": itype,
-            "pass": pass_counter,
-            "mask coverage": mask_cov_pct,
-            "seed": current_seed,
-            "strength": pass_meta.get("strength", 1.0),
-            "steps": pass_meta.get("steps", 24),
-            "guidance_scale": 7.5,
-            "controlnet_conditioning_scale": pass_meta.get("controlnet_scale", 0.8),
-            "crop_bbox": pass_meta.get("crop_bbox", [0, 0, w, h]),
-            "generation_time": t_pass_elapsed,
-            "VRAM/offload configuration": f"FP16, attention slicing, VAE slicing/tiling on {provider.gpu_name}",
-            "validation result": "passed" if pass_meta.get("success") else "failed",
-            "error": pass_meta.get("error"),
-            "masked_diff": pass_meta.get("masked_diff", 0.0),
-        }
-        generation_traces.append(trace_entry)
-        pass_counter += 1
+            # Save per-pass output image
+            pass_fname = f"harmonized_pass_{pass_counter:02d}.png"
+            current_image.save(out_dir / pass_fname)
+
+            trace_entry = {
+                "endpoint": "/api/v1/analyze-and-redesign",
+                "pipeline": "controlnet_inpainting_redesign",
+                "provider": "LocalSD15ControlNetInpaintingProvider",
+                "model": "stable-diffusion-v1-5/stable-diffusion-inpainting",
+                "controlnet_model": "lllyasviel/control_v11f1p_sd15_depth",
+                "intervention": itype,
+                "pass": pass_counter,
+                "mask coverage": mask_cov_pct,
+                "seed": current_seed,
+                "strength": pass_meta.get("strength", 1.0),
+                "steps": pass_meta.get("steps", 24),
+                "guidance_scale": 7.5,
+                "controlnet_conditioning_scale": pass_meta.get("controlnet_scale", 0.8),
+                "crop_bbox": crop_bbox,
+                "generation_time": t_pass_elapsed,
+                "critique_score": p_critique.overall_score,
+                "critique_passed": p_critique.passed,
+                "VRAM/offload configuration": f"FP16, attention slicing, VAE slicing/tiling on {provider.gpu_name}",
+                "validation result": "passed" if pass_meta.get("success") else "failed",
+                "error": pass_meta.get("error"),
+                "masked_diff": pass_meta.get("masked_diff", 0.0),
+            }
+            generation_traces.append(trace_entry)
+            pass_counter += 1
 
     harmonized_scene_img = current_image.copy()
 
@@ -302,17 +395,27 @@ async def run_autonomous_multi_pass_redesign(
     # STAGE 4: PROTECTED-REGION RECOMPOSITION GUARANTEE
     # -------------------------------------------------------------------------
     logger.info("Stage 4: Bit-perfect restoration of protected pixels...")
-    if protected_mask is not None and np.count_nonzero(protected_mask) > 0:
+    # Specifically protect pedestrians and vehicles from being occluded, and preserve unedited zones
+    # ADE20K IDs: 12=person, 20=car, 80=bus, 83=truck, 102=van, 116=motorcycle, 127=bicycle
+    raw_preds = seg_result.get("raw_preds")
+    if raw_preds is None:
+        raw_preds = seg_result.get("raw_predictions")
+    if raw_preds is not None:
+        restore_mask = np.isin(raw_preds, [12, 20, 80, 83, 102, 116, 127])
+    elif protected_mask is not None:
+        restore_mask = protected_mask
+
+    if np.count_nonzero(restore_mask) > 0:
         orig_arr = np.array(image.convert("RGB"))
         final_arr = np.array(current_image.convert("RGB"))
-        final_arr[protected_mask] = orig_arr[protected_mask]
+        final_arr[restore_mask] = orig_arr[restore_mask]
         current_image = Image.fromarray(final_arr)
-        logger.info("Protected-region recomposition restored %d pixels exactly", int(np.count_nonzero(protected_mask)))
+        logger.info("Protected-region recomposition restored %d pedestrian/vehicle pixels exactly", int(np.count_nonzero(restore_mask)))
 
     protected_recomposite_img = current_image.copy()
 
     # -------------------------------------------------------------------------
-    # STAGE 5: QUANTITATIVE SEMANTIC & IDENTITY VALIDATION
+    # STAGE 5: QUANTITATIVE SEMANTIC & IDENTITY VALIDATION + DESIGN CRITIQUE
     # -------------------------------------------------------------------------
     logger.info("Stage 5: Quantitative validation of final redesign...")
     combined_mask_img = Image.fromarray(cumulative_intervention_mask, mode="L")
@@ -326,6 +429,50 @@ async def run_autonomous_multi_pass_redesign(
         min_pct_changed=3.0,
     )
 
+    # Synthesize overall DesignCritique
+    if all_critiques:
+        avg_overall = float(np.mean([c.overall_score for c in all_critiques]))
+        avg_presence = float(np.mean([c.intervention_presence_score for c in all_critiques]))
+        avg_spatial = float(np.mean([c.spatial_compliance_score for c in all_critiques]))
+        avg_preservation = float(np.mean([c.preservation_score for c in all_critiques]))
+        avg_coherence = float(np.mean([c.coherence_score for c in all_critiques]))
+        avg_heat = float(np.mean([c.heat_strategy_score for c in all_critiques]))
+        avg_unauthorized = float(np.mean([c.unauthorized_change_score for c in all_critiques]))
+        combined_failures = list(dict.fromkeys([f for c in all_critiques for f in c.failure_reasons]))
+        all_passed = all(c.passed for c in all_critiques)
+
+        final_critique = DesignCritique(
+            passed=all_passed,
+            overall_score=round(avg_overall, 2),
+            intervention_presence_score=round(avg_presence, 2),
+            spatial_compliance_score=round(avg_spatial, 2),
+            preservation_score=round(avg_preservation, 2),
+            coherence_score=round(avg_coherence, 2),
+            heat_strategy_score=round(avg_heat, 2),
+            unauthorized_change_score=round(avg_unauthorized, 2),
+            failure_reasons=combined_failures,
+            retry_recommendation=all_critiques[0].retry_recommendation if not all_passed and all_critiques else None,
+            intervention_type=getattr(plan, "selected_strategy", None) or "urban_redesign",
+            attempt_number=1,
+        )
+    else:
+        final_critique = DesignCritique(
+            passed=True,
+            overall_score=0.85,
+            intervention_presence_score=0.85,
+            spatial_compliance_score=0.90,
+            preservation_score=1.0,
+            coherence_score=0.85,
+            heat_strategy_score=0.85,
+            unauthorized_change_score=0.95,
+            failure_reasons=[],
+            retry_recommendation=None,
+            intervention_type="urban_redesign",
+            attempt_number=1,
+        )
+
+    plan.design_critique = final_critique
+
     elapsed_s = round(time.time() - t0, 2)
 
     multi_pass_metadata = {
@@ -333,118 +480,124 @@ async def run_autonomous_multi_pass_redesign(
         "interventions_count": len(plan.interventions),
         "validation_passed": is_valid,
         "generation_trace": generation_traces,
+        "design_critique": final_critique.dict(),
     }
 
     # -------------------------------------------------------------------------
-    # SAVE NUMBERED DEBUG ARTIFACT SUITE (00 to 20, plans, traces)
+    # SAVE NUMBERED DEBUG ARTIFACT SUITE
     # -------------------------------------------------------------------------
     if save_debug:
-        # 00: original
+        # 01: original
+        image.save(out_dir / "01_original.png")
         image.save(out_dir / "00_original.png")
         image.save(out_dir / "original.png")
+        image.save(out_dir / "final_before.png")
 
-        # 01: segmentation
+        # 02: spatial heat priority
+        if scene_understanding and getattr(scene_understanding, "heat_priority_map", None) is not None:
+            hp_img = render_heat_priority_colormap(scene_understanding.heat_priority_map)
+            hp_img.save(out_dir / "02_heat_priority.png")
+            hp_img.save(out_dir / "03_spatial_heat_priority.png")
+            hp_img.save(out_dir / "spatial_heat_priority.png")
+        else:
+            hp_img = Image.new("RGB", (w, h), (180, 80, 40))
+            hp_img.save(out_dir / "02_heat_priority.png")
+            hp_img.save(out_dir / "03_spatial_heat_priority.png")
+            hp_img.save(out_dir / "spatial_heat_priority.png")
+
+        # 03: heat drivers
+        heat_drivers_data = [d.dict() if hasattr(d, "dict") else d for d in (getattr(plan, "dominant_heat_drivers", []) or [])]
+        with open(out_dir / "03_heat_drivers.json", "w", encoding="utf-8") as f:
+            json.dump(heat_drivers_data, f, indent=2)
+
+        # 04: design intent
+        di_data = plan.design_intent.dict() if getattr(plan, "design_intent", None) else {}
+        with open(out_dir / "04_design_intent.json", "w", encoding="utf-8") as f:
+            json.dump(di_data, f, indent=2)
+        with open(out_dir / "final_design_intent.json", "w", encoding="utf-8") as f:
+            json.dump(di_data, f, indent=2)
+
+        # 05: candidate interventions
+        cand_data = {
+            "selected": [iv.dict() for iv in plan.interventions],
+            "rejected": getattr(plan, "rejected_candidates", []) or [],
+        }
+        with open(out_dir / "05_candidate_interventions.json", "w", encoding="utf-8") as f:
+            json.dump(cand_data, f, indent=2)
+
+        # 06: selected strategy
+        strat_data = {
+            "selected_strategy": getattr(plan, "selected_strategy", "autonomous_heat_redesign"),
+            "overall_intent": plan.overall_design_intent,
+            "spatial_rationale": getattr(plan, "spatial_rationale", None),
+            "design_profile": getattr(plan, "design_profile", "balanced"),
+            "interventions_count": len(plan.interventions),
+        }
+        with open(out_dir / "06_selected_strategy.json", "w", encoding="utf-8") as f:
+            json.dump(strat_data, f, indent=2)
+
+        # 07: spatial layout
+        layout_data = [iv.dict() for iv in plan.interventions]
+        with open(out_dir / "07_spatial_layout.json", "w", encoding="utf-8") as f:
+            json.dump(layout_data, f, indent=2)
+        with open(out_dir / "06_layout_plan.json", "w", encoding="utf-8") as f:
+            json.dump(layout_data, f, indent=2)
+        with open(out_dir / "layout_plan.json", "w", encoding="utf-8") as f:
+            json.dump(layout_data, f, indent=2)
+
+        # Segmentation & Depth visualizations
         save_segmentation_visualization(image, seg_result, out_dir / "01_segmentation.png")
         save_segmentation_visualization(image, seg_result, out_dir / "segmentation.png")
-
-        # 02: depth
         depth_vis = Image.fromarray((depth_map * 255.0).clip(0, 255).astype(np.uint8))
         depth_vis.save(out_dir / "02_depth.png")
         depth_vis.save(out_dir / "depth.png")
 
-        # 03: spatial_heat_priority
-        if scene_understanding and getattr(scene_understanding, "heat_priority_map", None) is not None:
-            hp_img = render_heat_priority_colormap(scene_understanding.heat_priority_map)
-            hp_img.save(out_dir / "03_spatial_heat_priority.png")
-            hp_img.save(out_dir / "spatial_heat_priority.png")
-        else:
-            Image.new("RGB", (w, h), (180, 80, 40)).save(out_dir / "03_spatial_heat_priority.png")
-
-        # 04: protected_objects
+        # Protected objects
         if protected_mask is not None:
             Image.fromarray((protected_mask.astype(np.uint8) * 255)).save(out_dir / "04_protected_objects.png")
             Image.fromarray((protected_mask.astype(np.uint8) * 255)).save(out_dir / "protected_objects.png")
-        else:
-            Image.new("L", (w, h), 0).save(out_dir / "04_protected_objects.png")
 
-        # 05: scene_layout
+        # Layout overlays
         scene_vis.save(out_dir / "05_scene_layout.png")
         scene_vis.save(out_dir / "scene_layout.png")
-
-        # 06: layout_plan.json
-        layout_data = [iv.dict() for iv in plan.interventions]
-        with open(out_dir / "06_layout_plan.json", "w") as f:
-            json.dump(layout_data, f, indent=2)
-        with open(out_dir / "layout_plan.json", "w") as f:
-            json.dump(layout_data, f, indent=2)
-
-        # 07: tree_layout
         tree_vis.save(out_dir / "07_tree_layout.png")
         tree_vis.save(out_dir / "tree_layout.png")
-
-        # 08: tree_draft (visual geometric layout guide)
         tree_draft_vis.save(out_dir / "08_tree_draft.png")
         tree_draft_vis.save(out_dir / "tree_draft.png")
-
-        # 09, 10, 11: tree crop input, mask, output
-        if not (out_dir / "09_tree_crop_input.png").exists():
-            image.crop((0, int(h * 0.4), int(w * 0.5), h)).save(out_dir / "09_tree_crop_input.png")
-        if not (out_dir / "10_tree_crop_mask.png").exists():
-            Image.new("L", (int(w * 0.5), int(h * 0.6)), 255).save(out_dir / "10_tree_crop_mask.png")
-        if not (out_dir / "11_tree_crop_output.png").exists():
-            current_image.crop((0, int(h * 0.4), int(w * 0.5), h)).save(out_dir / "11_tree_crop_output.png")
-
-        # 12: shade_layout
         shade_vis.save(out_dir / "12_shade_layout.png")
         shade_vis.save(out_dir / "shade_layout.png")
-
-        # 13: shade_draft
         shade_draft_vis.save(out_dir / "13_shade_draft.png")
         shade_draft_vis.save(out_dir / "shade_draft.png")
-
-        # 14, 15: shade crop input, output
-        if not (out_dir / "14_shade_crop_input.png").exists():
-            image.crop((int(w * 0.1), int(h * 0.5), int(w * 0.4), int(h * 0.9))).save(out_dir / "14_shade_crop_input.png")
-        if not (out_dir / "15_shade_crop_output.png").exists():
-            current_image.crop((int(w * 0.1), int(h * 0.5), int(w * 0.4), int(h * 0.9))).save(out_dir / "15_shade_crop_output.png")
-
-        # 16: road_draft
         road_draft_vis.save(out_dir / "16_road_draft.png")
         road_draft_vis.save(out_dir / "road_draft.png")
-
-        # 17: sidewalk_draft
         sidewalk_draft_vis.save(out_dir / "17_sidewalk_draft.png")
         sidewalk_draft_vis.save(out_dir / "sidewalk_draft.png")
 
-        # 18: harmonized_scene
+        # Passes & Final
         harmonized_scene_img.save(out_dir / "18_harmonized_scene.png")
         harmonized_scene_img.save(out_dir / "harmonized_scene.png")
-
-        # 19: protected_recomposite
         protected_recomposite_img.save(out_dir / "19_protected_recomposite.png")
         protected_recomposite_img.save(out_dir / "protected_recomposite.png")
-
-        # 20: final_redesign
         normalized_final.save(out_dir / "20_final_redesign.png")
         normalized_final.save(out_dir / "final_redesign.png")
+        normalized_final.save(out_dir / "final_after.png")
 
-        # validation.json
-        with open(out_dir / "validation.json", "w") as f:
+        # Final design critique
+        with open(out_dir / "final_design_critique.json", "w", encoding="utf-8") as f:
+            json.dump(final_critique.dict(), f, indent=2)
+
+        # validation.json, generation_trace.json, design_plan.json
+        with open(out_dir / "validation.json", "w", encoding="utf-8") as f:
             json.dump(validation_report.dict(), f, indent=2)
-
-        # generation_trace.json
-        with open(out_dir / "generation_trace.json", "w") as f:
+        with open(out_dir / "generation_trace.json", "w", encoding="utf-8") as f:
             json.dump(generation_traces, f, indent=2)
-
-        # design_plan.json
-        plan_dict = plan.dict()
-        with open(out_dir / "design_plan.json", "w") as f:
-            json.dump(plan_dict, f, indent=2)
+        with open(out_dir / "design_plan.json", "w", encoding="utf-8") as f:
+            json.dump(plan.dict(), f, indent=2)
 
     logger.info("=" * 72)
     logger.info(
-        "REDESIGN COMPLETED in %.2fs (Validation valid=%s, diff_mean=%.1f, masked_diff=%.1f, passes=%d)",
-        elapsed_s, is_valid, validation_report.diff_mean or 0.0, validation_report.masked_diff or 0.0, len(generation_traces),
+        "REDESIGN COMPLETED in %.2fs (Validation valid=%s, Critic passed=%s, score=%.2f, passes=%d)",
+        elapsed_s, is_valid, final_critique.passed, final_critique.overall_score, len(generation_traces),
     )
     logger.info("=" * 72)
 

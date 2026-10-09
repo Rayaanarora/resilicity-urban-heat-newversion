@@ -233,6 +233,7 @@ class SegFormerEngine:
             "classes": classes_output,
             "source": "segformer",
             "masks": masks_output,
+            "surfaces": {m["className"]: m["areaPercentage"] for m in masks_output},
             "protected_objects": protected_output,
         }
 
