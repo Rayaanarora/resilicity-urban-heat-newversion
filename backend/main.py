@@ -373,10 +373,18 @@ async def analyze_and_redesign(
             logger.error("Multi-pass redesign error attempt 1: %s", e, exc_info=True)
             gen_error = str(e)
             edited_img = None
+            import gc, torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Retry local generation if attempt 1 failed or was rejected by validation
         if edited_img is None or report is None or not report.is_valid:
             logger.warning("Local SD generation attempt 1 unsuccessful (%s). Retrying local generation (attempt 2)...", gen_error)
+            import gc, torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             try:
                 edited_img, report, multi_pass_meta = await run_autonomous_multi_pass_redesign(
                     image=pil_img,
@@ -398,6 +406,10 @@ async def analyze_and_redesign(
                 logger.error("Multi-pass redesign error on retry attempt 2: %s", e, exc_info=True)
                 gen_error = f"Local generation retry error: {e}"
                 edited_img = None
+                import gc, torch
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         if edited_img is None or report is None or not report.is_valid:
             logger.error("Local SD generation failed after retry: %s. Returning generation unavailable (zero silent fallback).", gen_error)

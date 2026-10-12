@@ -355,6 +355,10 @@ class LocalSD15ControlNetInpaintingProvider(ImageEditingProvider):
 
                 # Resize result back to match input image dimensions
                 final_output = best_result.resize((image.width, image.height), Image.Resampling.LANCZOS)
+                import gc
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 return final_output, None, trace
 
             return await loop.run_in_executor(None, _sync_worker)

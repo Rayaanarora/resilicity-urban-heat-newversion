@@ -210,8 +210,11 @@ async def generate_single_tree_localized(
     pit_d = max(10, int(round(pit_dict.get("depth", trunk_w * 1.8))))
 
     # 2. Localized square contextual crop bounding box
-    tree_total_h = ay - (canopy_cy - canopy_ry)
-    crop_size = min(w, h, max(460, int(round(tree_total_h * 1.35))))
+    tree_total_h = max(20, ay - (canopy_cy - canopy_ry))
+    # Contextual crop sized so the tree naturally occupies ~50-65% of the frame
+    desired_crop = int(round(max(tree_total_h * 1.6, canopy_rx * 3.2)))
+    min_dim = min(w, h)
+    crop_size = max(192, min(min_dim, desired_crop))
     crop_cx = ax
     crop_cy = (ay + canopy_cy) // 2
     crop_x1 = max(0, min(w - crop_size, crop_cx - crop_size // 2))

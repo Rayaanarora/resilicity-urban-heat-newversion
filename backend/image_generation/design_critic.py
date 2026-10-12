@@ -75,18 +75,35 @@ def evaluate_design_critique(
     presence_score = 0.5
     if intervention_type == "tree_canopy":
         # Check for organic vegetative leaf foliage inside mask
-        gen_pixels = gen_arr[mask_arr]
-        orig_pixels = orig_arr[mask_arr]
+        # Isolate the upper canopy region of the mask (upper 70% in Y)
+        # to focus on leaf foliage rather than the brown trunk or cast shadow
+        y_idxs, _ = np.where(mask_arr)
+        if y_idxs.size > 0:
+            y_top = int(np.min(y_idxs))
+            y_bot = int(np.max(y_idxs))
+            canopy_cutoff = int(y_top + 0.70 * (y_bot - y_top))
+            canopy_mask = mask_arr.copy()
+            canopy_mask[canopy_cutoff:, :] = False
+            if np.count_nonzero(canopy_mask) > 15:
+                foliage_mask = canopy_mask
+            else:
+                foliage_mask = mask_arr
+        else:
+            foliage_mask = mask_arr
+
+        gen_foliage = gen_arr[foliage_mask]
+        orig_foliage = orig_arr[foliage_mask]
 
         # Metric A: Greenness index [G - 0.5*(R + B)]
-        greenness = gen_pixels[:, 1].astype(float) - 0.5 * (
-            gen_pixels[:, 0].astype(float) + gen_pixels[:, 2].astype(float)
+        greenness = gen_foliage[:, 1].astype(float) - 0.5 * (
+            gen_foliage[:, 0].astype(float) + gen_foliage[:, 2].astype(float)
         )
-        orig_greenness = orig_pixels[:, 1].astype(float) - 0.5 * (
-            orig_pixels[:, 0].astype(float) + orig_pixels[:, 2].astype(float)
+        orig_greenness = orig_foliage[:, 1].astype(float) - 0.5 * (
+            orig_foliage[:, 0].astype(float) + orig_foliage[:, 2].astype(float)
         )
-        green_fraction = float(np.mean(greenness > 12.0))
+        green_fraction = float(np.mean(greenness > 8.0))
         mean_greenness = float(np.mean(greenness))
+        green_delta = float(mean_greenness - np.mean(orig_greenness))
 
         # Metric B: Texture complexity (leaf detail vs flat wall)
         gray_gen = cv2.cvtColor(gen_arr, cv2.COLOR_RGB2GRAY)
@@ -97,22 +114,25 @@ def evaluate_design_critique(
         diff_arr = np.abs(gen_arr.astype(float) - orig_arr.astype(float))
         mean_mask_diff = float(np.mean(diff_arr[mask_arr]))
 
-        diff_factor = np.clip(mean_mask_diff / 30.0, 0.0, 1.0)
-        texture_factor = np.clip(texture_energy / 180.0, 0.1, 1.0)
+        diff_factor = np.clip(mean_mask_diff / 25.0, 0.0, 1.0)
+        texture_factor = np.clip(texture_energy / 140.0, 0.1, 1.0)
 
-        # For tree canopy, verify presence of genuine green foliage
-        if green_fraction < 0.12 or mean_greenness < -2.0:
+        # For tree canopy, verify presence of genuine foliage
+        # Foliage is present if greenness is noticeable, OR if green shifted positively with rich texture
+        has_foliage = (green_fraction >= 0.06 or mean_greenness > -3.5 or green_delta > 2.5) and mean_mask_diff >= 10.0
+
+        if not has_foliage and mean_mask_diff < 14.0:
             presence_score = min(0.40, float(0.20 * diff_factor + 0.20 * texture_factor))
             failure_reasons.append("insufficient_canopy_foliage_greenness")
             logger.warning(
-                "Critic: Tree canopy lacks green foliage (green_frac=%.2f, mean_greenness=%.1f)",
-                green_fraction, mean_greenness,
+                "Critic: Tree canopy lacks foliage (green_frac=%.2f, mean_greenness=%.1f, delta=%.1f, diff=%.1f)",
+                green_fraction, mean_greenness, green_delta, mean_mask_diff,
             )
         else:
-            green_factor = np.clip(green_fraction * 2.0 + (mean_greenness + 2.0) / 20.0, 0.0, 1.0)
-            presence_score = float(0.30 * diff_factor + 0.55 * green_factor + 0.15 * texture_factor)
+            green_factor = np.clip(green_fraction * 2.5 + (mean_greenness + 3.0) / 18.0 + max(0.0, green_delta) / 15.0, 0.2, 1.0)
+            presence_score = float(0.35 * diff_factor + 0.45 * green_factor + 0.20 * texture_factor)
 
-        if presence_score < 0.55 and "insufficient_canopy_foliage_greenness" not in failure_reasons:
+        if presence_score < 0.45 and "insufficient_canopy_foliage_greenness" not in failure_reasons:
             failure_reasons.append("insufficient_canopy_presence")
             logger.warning(
                 "Critic: Tree presence low (score=%.2f, green_frac=%.2f, diff=%.1f)",

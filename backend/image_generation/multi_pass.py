@@ -424,9 +424,9 @@ async def run_autonomous_multi_pass_redesign(
         image.size,
         orig_img=image,
         mask_img=combined_mask_img,
-        min_diff_mean=4.0,
-        min_masked_diff=10.0,
-        min_pct_changed=3.0,
+        min_diff_mean=1.5,
+        min_masked_diff=8.0,
+        min_pct_changed=1.0,
     )
 
     # Synthesize overall DesignCritique

@@ -122,10 +122,23 @@ def validate_image_output(
         perceptual_score = float(round(min(100.0, (diff_mean / 40.0) * 100.0), 1))
 
         # 3a. Check overall difference: Reject if visually identical
-        if diff_mean < min_diff_mean or pct_changed < min_pct_changed:
+        # Scale overall thresholds if a localized mask is provided,
+        # ensuring small interventions (e.g. single tree, compact verge)
+        # aren't rejected simply because the rest of the scene is preserved.
+        if mask_img is not None:
+            m_resized = mask_img.convert("L").resize((gen_w, gen_h), Image.Resampling.NEAREST)
+            m_arr_quick = np.array(m_resized) > 30
+            mask_cov_frac = float(np.count_nonzero(m_arr_quick) / max(1, total_pixels))
+        else:
+            mask_cov_frac = 1.0
+
+        effective_min_diff = min(min_diff_mean, max(0.25, min_diff_mean * (mask_cov_frac / 0.08)))
+        effective_min_pct = min(min_pct_changed, max(0.3, mask_cov_frac * 100.0 * 0.35))
+
+        if diff_mean < effective_min_diff or pct_changed < effective_min_pct:
             msg = (
                 f"Generated image is virtually identical to original "
-                f"(diff_mean={diff_mean:.2f} < {min_diff_mean:.1f}, changed={pct_changed:.1f}% < {min_pct_changed:.1f}%)."
+                f"(diff_mean={diff_mean:.2f} < {effective_min_diff:.2f}, changed={pct_changed:.1f}% < {effective_min_pct:.1f}%)."
             )
             warnings.append(msg)
             logger.warning("Validation rejected: %s", msg)
