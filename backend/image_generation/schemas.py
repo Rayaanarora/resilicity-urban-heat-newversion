@@ -3,6 +3,8 @@
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
+from buildable.models import StreetMetrics
+
 
 DesignProfile = Literal[
     "balanced",
@@ -175,6 +177,9 @@ class SpatialDesignPlan(BaseModel):
     spatial_rationale: Optional[str] = Field(default=None, description="Spatial reasoning for intervention placements")
     baseline_state: Optional[Dict[str, Any]] = Field(default=None, description="Baseline microclimate state")
     post_intervention_state: Optional[Dict[str, Any]] = Field(default=None, description="Projected post-intervention microclimate state")
+
+    # Buildable design (all optional for backward compatibility)
+    street_metrics: Optional[StreetMetrics] = Field(default=None, description="Sidewalk/road widths in metres with uncertainty")
 
 
 class SceneAnalysis(BaseModel):

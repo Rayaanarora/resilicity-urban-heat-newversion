@@ -34,6 +34,7 @@ from image_generation.schemas import (
     SpatialDesignPlan,
     SpatialInterventionSpec,
 )
+from buildable import estimate_street_metrics
 from scene_understanding import SceneUnderstanding, analyze_scene
 
 logger = logging.getLogger("resilicity.planner")
@@ -943,6 +944,7 @@ def generate_spatial_plan(
     seg_result: Optional[Dict[str, Any]] = None,
     design_profile: Optional[DesignProfile] = None,
     requested_types: Optional[List[str]] = None,
+    road_width_m: Optional[float] = None,
 ) -> SpatialDesignPlan:
     """Autonomously generate an intelligent urban resilience design plan.
 
@@ -966,6 +968,11 @@ def generate_spatial_plan(
     road = scene.roadway
     road_mat = scene.roadway_material or {}
     veg_dist = scene.vegetation_distribution or {}
+
+    # Step 1b: Metric widths (carriageway width as scale reference)
+    street_metrics = estimate_street_metrics(
+        scene.road_mask, scene.left_sidewalk_mask, scene.right_sidewalk_mask, road_width_m
+    )
 
     # Step 2: Build Heat-Driver Diagnosis
     drivers = diagnose_heat_drivers(scene, surfaces)
@@ -1334,6 +1341,7 @@ def generate_spatial_plan(
         spatial_rationale=spatial_rationale,
         baseline_state=baseline_state,
         post_intervention_state=post_state,
+        street_metrics=street_metrics,
     )
 
 
