@@ -52,6 +52,8 @@ from image_generation import (
     ValidationReport,
 )
 from inpainting import ResilientInpainter, encode_image_to_base64
+from buildable import cooling_band, land_cover_shift
+from buildable.config import THERMAL
 from planner import (
     generate_spatial_plan,
     analyze_scene_heuristics,
@@ -152,31 +154,31 @@ def predict(f: dict[str, float]) -> float:
 
 
 def compute_thermal_impact(surfaces: Dict[str, float], interventions: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Calculate deterministic microclimate thermal impact."""
+    """Indicative microclimate cooling with confidence bands.
+
+    Per-type coefficients and land-cover shifts come from buildable/config.py. Types without a
+    coefficient are listed in unmodelledInterventions instead of silently counting as zero.
+    """
     total_cooling_est = 0.0
+    cooling_lo = cooling_hi = 0.0
     shifts = {"f_built": 0.0, "f_tree": 0.0, "f_grass": 0.0}
+    per_item: List[Dict[str, Any]] = []
+    unmodelled: List[str] = []
 
     for item in interventions:
         itype = item.get("type", "")
         cov = float(item.get("coverage", 0.5))
-        if itype == "tree_canopy":
-            s = round(min(cov * 0.10, 0.06), 3)
-            shifts["f_built"] -= s
-            shifts["f_tree"] += s
-            total_cooling_est += round(1.2 * (0.6 + 0.4 * cov), 1)
-        elif itype == "cool_pavement":
-            total_cooling_est += round(0.8 * cov, 1)
-        elif itype == "permeable_pave":
-            total_cooling_est += round(0.6 * cov, 1)
-        elif itype == "cool_roof":
-            total_cooling_est += round(0.9 * cov, 1)
-        elif itype == "green_roof":
-            s = round(min(cov * 0.05, 0.03), 3)
-            shifts["f_built"] -= s
-            shifts["f_grass"] += s
-            total_cooling_est += round(1.4 * cov, 1)
-        elif itype == "shade_structure":
-            total_cooling_est += round(0.7 * cov, 1)
+        band = cooling_band(itype, cov)
+        if band is None:
+            unmodelled.append(itype)
+            continue
+        lo, mid, hi = band
+        total_cooling_est += mid
+        cooling_lo += lo
+        cooling_hi += hi
+        per_item.append({"type": itype, "coolingC": mid, "rangeC": [lo, hi]})
+        for k, v in land_cover_shift(itype, cov).items():
+            shifts[k] = shifts.get(k, 0.0) + v
 
     # Machine learning land surface temperature model prediction
     try:
@@ -187,16 +189,36 @@ def compute_thermal_impact(surfaces: Dict[str, float], interventions: List[Dict[
         p0, p1 = predict(before), predict(after)
         ml_delta = p1 - p0
     except Exception:
-        p0, p1, ml_delta = 38.5, 38.5 - total_cooling_est, -total_cooling_est
+        p0 = THERMAL["fallback_baseline_c"]
+        p1, ml_delta = p0 - total_cooling_est, -total_cooling_est
 
-    return {
+    rmse = float(card["spatial_cv"]["RMSE"]) if card else None
+    r2 = float(card["spatial_cv"]["R2"]) if card else None
+    result = {
         "baselineSurfaceTempC": round(p0, 1),
         "projectedSurfaceTempC": round(p0 - total_cooling_est, 1),
         "totalCoolingReductionC": round(total_cooling_est, 1),
         "mlModelDeltaC": round(ml_delta, 2),
         "methodology": "Dual-layer: Physical empirical microclimate calculations coupled with Landsat 8/9 LST regression.",
         "disclaimer": "AI image visualization illustrates architectural cooling intent; physical cooling figures are computed via thermodynamic and empirical models.",
+        # Confidence bands (optional, newer clients)
+        "coolingRangeC": [round(cooling_lo, 1), round(cooling_hi, 1)],
+        "perIntervention": per_item,
+        "unmodelledInterventions": unmodelled,
+        "mlModelR2": round(r2, 2) if r2 is not None else None,
+        "mlModelRmseC": round(rmse, 2) if rmse is not None else None,
+        "mlModelDeltaRangeC": [round(ml_delta - rmse, 2), round(ml_delta + rmse, 2)] if rmse is not None else None,
+        "confidence": "low",
+        "confidenceNote": (
+            f"Indicative only: the land-surface-temperature regression has spatial-CV R2 {r2:.2f} "
+            f"(RMSE {rmse:.1f} C), and per-type cooling coefficients are literature-based ranges "
+            "summed without interaction effects." if r2 is not None else
+            "Indicative only: per-type cooling coefficients are literature-based ranges."
+        ),
     }
+    if unmodelled:
+        result["warning"] = f"No cooling coefficient for: {', '.join(unmodelled)}; excluded from totals."
+    return result
 
 
 # ---------------------------------------------------------------------------

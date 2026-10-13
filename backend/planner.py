@@ -34,8 +34,14 @@ from image_generation.schemas import (
     SpatialDesignPlan,
     SpatialInterventionSpec,
 )
-from buildable import build_implementation_plan, estimate_street_metrics, get_spec, select_within_budget
-from buildable.config import CLEARANCES
+from buildable import (
+    build_implementation_plan,
+    cooling_band,
+    estimate_street_metrics,
+    get_spec,
+    select_within_budget,
+)
+from buildable.config import CLEARANCES, IMPACT, THERMAL
 from buildable.gating import GateResult, SiteContext, gate
 from buildable.observations import observe_site
 from scene_understanding import SceneUnderstanding, analyze_scene
@@ -414,8 +420,55 @@ def evaluate_interactions(
         delta_utility -= 0.15
         conflicts.append("Diminishing returns: Second tree corridor provides incremental shade but increases street canyon canopy enclosure.")
 
-    # Diminishing returns: Duplicate surface interventions
-    if candidate_type in chosen_types and candidate_type != "tree_canopy":
+    same_zone = [c["type"] for c in chosen if c["target_zone"] == target_zone]
+    zone_label = target_zone.replace("_", " ")
+
+    # Redundant ways of shading the same footpath
+    redundant_pairs = [
+        ({"parking_lane_tree", "tree_canopy"}, "street trees"),
+        ({"facade_awning", "shade_structure"}, "overhead shade"),
+        ({"solar_canopy", "shade_structure"}, "overhead shade"),
+        ({"solar_canopy", "facade_awning"}, "overhead shade"),
+    ]
+    for pair, what in redundant_pairs:
+        if candidate_type in pair and any(t in pair and t != candidate_type for t in same_zone):
+            is_rejected = True
+            conflicts.append(f"Redundancy: {what} already provided on the {zone_label}.")
+
+    # Trees would shade the PV array
+    if (candidate_type == "solar_canopy" and {"tree_canopy", "parking_lane_tree"} & set(same_zone)) or (
+        candidate_type in ("tree_canopy", "parking_lane_tree") and "solar_canopy" in same_zone
+    ):
+        is_rejected = True
+        conflicts.append(f"Conflict: street trees and a solar canopy on the {zone_label} would shade the panels.")
+
+    # Synergies
+    if candidate_type == "kerb_bioswale" and "parking_lane_tree" in same_zone:
+        delta_utility += 0.08
+        synergies.append("Synergy: rain gardens share kerb build-outs with parking-lane trees and water them.")
+    if candidate_type == "kerb_bioswale" and "permeable_pave" in chosen_types:
+        delta_utility += 0.06
+        synergies.append("Synergy: permeable footpath and rain gardens together manage street runoff.")
+    if candidate_type == "cool_wall" and "facade_awning" in same_zone:
+        delta_utility += 0.04
+        synergies.append("Synergy: awnings shade the ground floor while the coating cools the wall above.")
+
+    # Reflective walls in deep canyons bounce sun onto pedestrians
+    if candidate_type == "cool_wall" and scene.street_geometry.street_canyon_strength >= 0.65:
+        delta_utility -= 0.10
+        conflicts.append("Caution: in a deep canyon a reflective wall raises radiant load on pedestrians; use matte finish.")
+
+    # Diminishing returns: second parking-lane tree corridor
+    if candidate_type == "parking_lane_tree" and "parking_lane_tree" in chosen_types:
+        delta_utility -= 0.15
+
+    # Duplicates: one per zone for side-specific items, one per street otherwise
+    per_zone = {"tree_canopy", "parking_lane_tree", "facade_awning", "cool_wall", "kerb_bioswale"}
+    if candidate_type in per_zone:
+        if candidate_type in same_zone:
+            is_rejected = True
+            conflicts.append(f"Duplicate intervention: {candidate_type} already planned on the {zone_label}.")
+    elif candidate_type in chosen_types:
         is_rejected = True
         conflicts.append(f"Duplicate intervention: {candidate_type} already included in plan.")
 
@@ -858,6 +911,66 @@ def compute_intervention_utility(
         water_benefit = 0.75 if itype == "green_roof" else 0.0
         coverage = 0.65
 
+    elif itype in ("facade_awning", "cool_wall", "green_facade"):
+        wall = float(geom.building_wall_density)
+        label = zone_sw.zone_name.replace("_", " ")
+        evidence.append(f"Building frontage occupies {wall*100:.0f}% of the scene along the {label}")
+        if zone_sw.solar_exposure >= 0.35:
+            evidence.append(f"Frontage zone on the {label} is sun-exposed (proxy {zone_sw.solar_exposure:.2f})")
+        if zone_sw.existing_shade < 0.40:
+            evidence.append(f"Only {zone_sw.existing_shade*100:.0f}% existing shade where people walk and wait")
+        feasibility = float(min(0.9, 0.45 + wall))
+        traffic_conflict = 0.0
+        visual_disruption = 0.08
+        if itype == "facade_awning":
+            cost, heat_benefit, ped_comfort = 0.30, 0.65 * zone_sw.pedestrian_heat_priority, 0.85
+            shade_benefit = 0.75 * zone_sw.solar_exposure
+            coverage = 0.6
+        else:
+            cost, heat_benefit, ped_comfort = 0.15, 0.50 * geom.street_canyon_strength, 0.40
+            shade_benefit = 0.0
+            coverage = 0.7
+
+    elif itype in ("parking_lane_tree", "kerb_bioswale"):
+        label = zone_sw.zone_name.replace("_", " ")
+        evidence.append(f"Kerbside lane along the {label} can host build-outs without using footpath width")
+        if zone_sw.solar_exposure >= 0.35:
+            evidence.append(f"Sun-exposed kerb edge on the {label} (proxy {zone_sw.solar_exposure:.2f})")
+        if zone_sw.existing_tree_density < 0.30:
+            evidence.append(f"Existing canopy along the {label} is sparse ({zone_sw.existing_tree_density*100:.0f}%)")
+        traffic_conflict = 0.30
+        visual_disruption = 0.12
+        if itype == "parking_lane_tree":
+            cost, feasibility = 0.60, 0.65
+            heat_benefit, ped_comfort = 0.85 * zone_sw.pedestrian_heat_priority, 0.85
+            shade_benefit, water_benefit = 0.90 * zone_sw.solar_exposure, 0.40
+            coverage = 0.35
+        else:
+            cost, feasibility = 0.45, 0.60
+            heat_benefit, ped_comfort, shade_benefit, water_benefit = 0.40, 0.50, 0.10, 0.95
+            coverage = 0.4
+
+    elif itype in ("bus_shelter", "solar_canopy", "misting_system"):
+        label = zone_sw.zone_name.replace("_", " ")
+        evidence.append(f"{label.capitalize()} is wide enough for a structure plus clear walkway")
+        if zone_sw.solar_exposure >= 0.35:
+            evidence.append(f"High solar exposure on the {label} (proxy {zone_sw.solar_exposure:.2f})")
+        if zone_sw.existing_shade < 0.40:
+            evidence.append(f"Low existing shade ({zone_sw.existing_shade*100:.0f}%) on the {label}")
+        traffic_conflict = 0.05
+        visual_disruption = 0.15
+        if itype == "bus_shelter":
+            # A bus stop cannot be seen reliably in a photo, so shelters rank low unless budget mode favours them.
+            cost, feasibility, heat_benefit, ped_comfort, shade_benefit = 0.70, 0.25, 0.20, 0.45, 0.30
+            coverage = 0.3
+        elif itype == "solar_canopy":
+            cost, feasibility = 0.85, 0.55
+            heat_benefit, ped_comfort, shade_benefit = 0.70 * zone_sw.pedestrian_heat_priority, 0.85, 0.90 * zone_sw.solar_exposure
+            coverage = 0.5
+        else:
+            cost, feasibility, heat_benefit, ped_comfort, shade_benefit = 0.40, 0.50, 0.60, 0.80, 0.0
+            coverage = 0.3
+
     # Design Profile Adaptation
     if profile == "pedestrian_first":
         alpha, beta, gamma, delta, eps, zeta = 0.20, 0.35, 0.25, 0.15, 0.05, 0.10
@@ -918,30 +1031,17 @@ def evaluate_expected_impact(
     for item in selected:
         itype = item["type"]
         cov = float(item["coverage"])
-        if itype == "tree_canopy":
-            delta_heat -= 0.15 * (0.6 + 0.4 * cov)
-            delta_shade += 45.0 * (0.6 + 0.4 * cov)
-            delta_veg += 18.0 * (0.6 + 0.4 * cov)
-            delta_imp -= 8.0 * cov
-            total_cooling += round(1.2 * (0.6 + 0.4 * cov), 1)
-        elif itype == "shade_structure":
-            delta_heat -= 0.10 * cov
-            delta_shade += 30.0 * cov
-            total_cooling += round(0.7 * cov, 1)
-        elif itype == "cool_pavement":
-            delta_heat -= 0.12 * cov
-            total_cooling += round(0.8 * cov, 1)
-        elif itype == "permeable_pave":
-            delta_heat -= 0.08 * cov
-            delta_imp -= 16.0 * cov
-            total_cooling += round(0.6 * cov, 1)
-        elif itype == "green_roof":
-            delta_heat -= 0.10 * cov
-            delta_veg += 15.0 * cov
-            total_cooling += round(1.4 * cov, 1)
-        elif itype == "cool_roof":
-            delta_heat -= 0.08 * cov
-            total_cooling += round(0.9 * cov, 1)
+        coeff = IMPACT.get(itype)
+        band = cooling_band(itype, cov)
+        if coeff is None or band is None:
+            continue
+        ramp_base, ramp_slope = THERMAL["tree_coverage_ramp"]
+        factor = (ramp_base + ramp_slope * cov) if coeff.get("ramp") else cov
+        delta_heat += coeff["heat"] * factor
+        delta_shade += coeff["shade"] * factor
+        delta_veg += coeff["veg"] * factor
+        delta_imp += coeff["imp"] * cov
+        total_cooling += band[1]
 
     proj_heat = max(0.15, base_heat + delta_heat)
     proj_shade = min(95.0, base_ped_shade + delta_shade)
@@ -1097,7 +1197,7 @@ def generate_spatial_plan(
                 "excluded_length_m": left_gate.excluded_length_m,
                 "visual_design": CATALOG["tree_canopy"]["visual_design"],
                 "reason": CATALOG["tree_canopy"]["reason"],
-                "cooling": round(1.2 * (0.6 + 0.4 * cov), 1),
+                "cooling": cooling_band("tree_canopy", cov)[1],
             })
 
     # Check Right Sidewalk Tree Canopy
@@ -1123,7 +1223,7 @@ def generate_spatial_plan(
                 "excluded_length_m": right_gate.excluded_length_m,
                 "visual_design": CATALOG["tree_canopy"]["visual_design"],
                 "reason": CATALOG["tree_canopy"]["reason"],
-                "cooling": round(1.2 * (0.6 + 0.4 * cov), 1),
+                "cooling": cooling_band("tree_canopy", cov)[1],
             })
 
     # Check Tensile Shade Structure
@@ -1148,7 +1248,7 @@ def generate_spatial_plan(
                 "visual_design": CATALOG["shade_structure"]["visual_design"],
                 "reason": CATALOG["shade_structure"]["reason"],
                 "conditions": shade_gate.conditions,
-                "cooling": round(0.7 * cov, 1),
+                "cooling": cooling_band("shade_structure", cov)[1],
             })
 
     # Check Cool Pavement on Roadway
@@ -1172,7 +1272,7 @@ def generate_spatial_plan(
                     "placement": "Applied across asphalt road plane while strictly preserving crosswalks, lane markings, and curbs",
                     "visual_design": CATALOG["cool_pavement"]["visual_design"],
                     "reason": CATALOG["cool_pavement"]["reason"],
-                    "cooling": round(0.8 * cov, 1),
+                    "cooling": cooling_band("cool_pavement", cov)[1],
                 })
 
     # Check Permeable Pavers on Sidewalk
@@ -1195,8 +1295,55 @@ def generate_spatial_plan(
                 "placement": f"Installed across {pave_sw.zone_name.replace('_', ' ')} pedestrian walking corridor",
                 "visual_design": CATALOG["permeable_pave"]["visual_design"],
                 "reason": CATALOG["permeable_pave"]["reason"],
-                "cooling": round(0.6 * cov, 1),
+                "cooling": cooling_band("permeable_pave", cov)[1],
             })
+
+    # Check buildable catalog types (gated first, then scored like the core types)
+    wider_zone = (
+        "left_sidewalk"
+        if (street_metrics.left_sidewalk_m or 0.0) >= (street_metrics.right_sidewalk_m or 0.0)
+        else "right_sidewalk"
+    )
+    catalog_slots = [
+        ("facade_awning", "left_sidewalk"), ("facade_awning", "right_sidewalk"),
+        ("cool_wall", "left_sidewalk"), ("cool_wall", "right_sidewalk"),
+        ("kerb_bioswale", "left_sidewalk"), ("kerb_bioswale", "right_sidewalk"),
+        ("bus_shelter", wider_zone), ("solar_canopy", wider_zone), ("misting_system", wider_zone),
+    ]
+    # Parking-lane trees only where sidewalk tree pits were ruled out.
+    catalog_slots += [
+        ("parking_lane_tree", zone)
+        for zone, tree_gate in (("left_sidewalk", left_gate), ("right_sidewalk", right_gate))
+        if tree_gate is None
+    ]
+    for itype, zone in catalog_slots:
+        slot_gate = admit(itype, zone)
+        if not slot_gate:
+            continue
+        u_val, ev_list, feas, cov = compute_intervention_utility(itype, scene, zone, profile)
+        if len(ev_list) < 2:
+            continue
+        text = CATALOG[itype]
+        zone_label = zone.replace("_", " ")
+        candidates.append({
+            "type": itype,
+            "target_region": text["target"],
+            "target_zone": zone,
+            "utility": u_val,
+            "evidence": ev_list,
+            "feasibility": feas,
+            "coverage": cov,
+            "heat_mechanism": text["heat_mechanism"],
+            "what": text["visual_design"],
+            "where": f"{text['placement']} ({zone_label})",
+            "why": text["reason"],
+            "placement": f"{text['placement']} ({zone_label})",
+            "visual_design": text["visual_design"],
+            "reason": text["reason"],
+            "cooling": cooling_band(itype, cov)[1],
+            "conditions": slot_gate.conditions,
+            "excluded_length_m": slot_gate.excluded_length_m,
+        })
 
     # Step 6: Greedy Marginal Utility Optimization with Design Budget
     # Determine design budget (1 to 4 interventions depending on vulnerability severity)
@@ -1292,7 +1439,7 @@ def generate_spatial_plan(
                 "placement": t_meta["placement"],
                 "visual_design": t_meta["visual_design"],
                 "reason": t_meta["reason"],
-                "cooling": 1.2,
+                "cooling": cooling_band("tree_canopy", 0.35)[1],
                 "marginal_utility": 0.85,
                 "interaction_with_others": {"synergies": [], "conflicts": []},
             })

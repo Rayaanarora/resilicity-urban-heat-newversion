@@ -117,22 +117,28 @@ def test_spatial_planner_generates_valid_schema():
     assert first_iv.cooling_impact_c > 0.0
 
 
-def test_unscaled_site_trees_carry_a_survey_condition():
+def test_unscaled_site_items_carry_a_survey_condition():
     # No carriageway in the photo: widths cannot be judged, so trees need a site survey first.
-    plan = generate_spatial_plan(Image.new("RGB", (640, 480)), {"road": 35.0, "pavement": 15.0})
-    trees = [iv for iv in plan.interventions if iv.type == "tree_canopy"]
-    assert trees and all(any("survey" in c for c in iv.spatial_constraints) for iv in trees)
+    # (An all-zero raw_preds would be ADE class 0 = wall everywhere, so use sky instead.)
+    import numpy as np
+    sky = {"raw_preds": np.full((480, 640), 2, np.int32), "masks": [], "protected_objects": []}
+    plan = generate_spatial_plan(Image.new("RGB", (640, 480)), {"road": 35.0, "pavement": 15.0}, seg_result=sky)
+    assert not plan.street_metrics.scale_available
+    sidewalk_items = [iv for iv in plan.interventions if iv.target_zone in ("left_sidewalk", "right_sidewalk")]
+    assert sidewalk_items
+    assert all(any("survey" in c for c in iv.spatial_constraints) for iv in sidewalk_items)
 
 
 def test_design_profiles_influence_plan():
     img = Image.new("RGB", (640, 480))
     surfaces = {"road": 40.0, "wall": 20.0, "pavement": 20.0, "vegetation": 5.0, "roof": 5.0}
 
-    ped_plan = generate_spatial_plan(img, surfaces, design_profile="pedestrian_first")
+    seg = _measurable_street_seg()
+    ped_plan = generate_spatial_plan(img, surfaces, seg_result=seg, design_profile="pedestrian_first", road_width_m=7.0)
     types_ped = [i.type for i in ped_plan.interventions]
     assert "tree_canopy" in types_ped or "permeable_pave" in types_ped
 
-    max_plan = generate_spatial_plan(img, surfaces, design_profile="maximum_cooling")
+    max_plan = generate_spatial_plan(img, surfaces, seg_result=seg, design_profile="maximum_cooling", road_width_m=7.0)
     assert max_plan.design_profile == "maximum_cooling"
 
 

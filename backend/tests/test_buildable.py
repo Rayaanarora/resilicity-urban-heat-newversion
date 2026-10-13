@@ -333,3 +333,70 @@ def test_planner_budget_mode_stays_within_cap():
     ip = plan.implementation_plan
     assert ip is not None and ip.budget_lakh == 5.0 and ip.within_budget
     assert (ip.total_cost_inr_low + ip.total_cost_inr_high) / 2 <= 5.0 * BUDGET["inr_per_lakh"]
+
+
+# ---------------------------------------------------------------------------
+# 5. Integration: thermal coefficients, new candidate types, interactions
+# ---------------------------------------------------------------------------
+from buildable import cooling_band
+
+
+@pytest.mark.parametrize("itype", NEW_TYPES + EXISTING_TYPES)
+def test_every_catalog_type_has_nonzero_cooling(itype):
+    lo, mid, hi = cooling_band(itype, 0.5)
+    assert 0 < lo <= mid <= hi
+
+
+def test_thermal_impact_reports_bands_and_flags_unknown_types():
+    from main import card, compute_thermal_impact
+    surfaces = {"road": 40.0, "wall": 25.0, "pavement": 20.0, "vegetation": 5.0}
+    out = compute_thermal_impact(surfaces, [
+        {"type": "facade_awning", "coverage": 0.6},
+        {"type": "cool_wall", "coverage": 0.7},
+        {"type": "teleporter", "coverage": 0.5},
+    ])
+    assert out["totalCoolingReductionC"] > 0
+    assert {p["type"] for p in out["perIntervention"]} == {"facade_awning", "cool_wall"}
+    assert out["unmodelledInterventions"] == ["teleporter"] and "teleporter" in out["warning"]
+    lo, hi = out["coolingRangeC"]
+    assert lo <= out["totalCoolingReductionC"] <= hi
+    assert out["mlModelR2"] == pytest.approx(card["spatial_cv"]["R2"], abs=0.01)
+    d_lo, d_hi = out["mlModelDeltaRangeC"]
+    assert d_hi - d_lo == pytest.approx(2 * card["spatial_cv"]["RMSE"], abs=0.02)
+    assert out["confidence"] == "low"
+
+
+def _street_seg(left_px, road_px, right_px, w=640, h=480):
+    raw = np.full((h, w), 2, np.int32)
+    raw[: int(h * 0.55), :] = 0
+    y = int(h * 0.55)
+    raw[y:, :left_px] = 3
+    raw[y:, left_px:left_px + road_px] = 6
+    raw[y:, left_px + road_px:left_px + road_px + right_px] = 3
+    return {"raw_preds": raw, "masks": [], "protected_objects": []}
+
+
+def test_narrow_sidewalks_on_wide_road_get_parking_lane_trees():
+    from PIL import Image
+    from planner import generate_spatial_plan
+    # 1.3 m footpaths on a 10 m carriageway: pits do not fit, a build-out leaves 8 m.
+    plan = generate_spatial_plan(Image.new("RGB", (640, 480)), {"road": 40.0, "pavement": 8.0, "wall": 40.0},
+                                 seg_result=_street_seg(42, 320, 42), road_width_m=10.0)
+    types = [iv.type for iv in plan.interventions]
+    assert "tree_canopy" not in types
+    assert "parking_lane_tree" in types
+    assert any(r["type"] == "tree_canopy" and r["rule"] == "tree_canopy_clear_width" for r in plan.rejected_candidates)
+
+
+def test_interactions_reject_redundant_and_conflicting_pairs():
+    from planner import evaluate_interactions
+    from scene_understanding import analyze_scene
+    from PIL import Image
+    scene = analyze_scene(Image.new("RGB", (640, 480)), _street_seg(160, 320, 160))
+    tree_left = [{"type": "tree_canopy", "target_zone": "left_sidewalk"}]
+    assert evaluate_interactions("parking_lane_tree", "left_sidewalk", tree_left, scene)[3]
+    assert evaluate_interactions("solar_canopy", "left_sidewalk", tree_left, scene)[3]
+    assert not evaluate_interactions("solar_canopy", "right_sidewalk", tree_left, scene)[3]
+    awning_left = [{"type": "facade_awning", "target_zone": "left_sidewalk"}]
+    assert evaluate_interactions("shade_structure", "left_sidewalk", awning_left, scene)[3]
+    assert not evaluate_interactions("facade_awning", "right_sidewalk", awning_left, scene)[3]

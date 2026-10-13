@@ -288,6 +288,40 @@ QUANTITY = {
 }
 
 # ---------------------------------------------------------------------------
+# 4. Thermal model coefficients
+# ---------------------------------------------------------------------------
+THERMAL = {
+    # Land-cover shift seen by the Landsat regression per unit coverage, and its cap.
+    "land_cover_shift": {
+        "tree_canopy": {"f_tree": (0.10, 0.06)},
+        "parking_lane_tree": {"f_tree": (0.08, 0.05)},
+        "green_roof": {"f_grass": (0.05, 0.03)},
+        "kerb_bioswale": {"f_grass": (0.03, 0.02)},
+    },
+    # Tree cooling ramps with coverage: central * (base + slope * coverage).
+    "tree_coverage_ramp": (0.6, 0.4),
+    "fallback_baseline_c": 38.5,
+}
+
+# Expected-impact deltas per unit coverage used by the planner's before/after summary.
+IMPACT = {
+    "tree_canopy":       {"heat": -0.15, "shade": 45.0, "veg": 18.0, "imp": -8.0, "ramp": True},
+    "parking_lane_tree": {"heat": -0.12, "shade": 35.0, "veg": 12.0, "imp": -6.0, "ramp": True},
+    "shade_structure":   {"heat": -0.10, "shade": 30.0, "veg": 0.0, "imp": 0.0},
+    "facade_awning":     {"heat": -0.06, "shade": 20.0, "veg": 0.0, "imp": 0.0},
+    "solar_canopy":      {"heat": -0.10, "shade": 30.0, "veg": 0.0, "imp": 0.0},
+    "bus_shelter":       {"heat": -0.03, "shade": 5.0, "veg": 0.0, "imp": 0.0},
+    "cool_pavement":     {"heat": -0.12, "shade": 0.0, "veg": 0.0, "imp": 0.0},
+    "permeable_pave":    {"heat": -0.08, "shade": 0.0, "veg": 0.0, "imp": -16.0},
+    "kerb_bioswale":     {"heat": -0.04, "shade": 0.0, "veg": 4.0, "imp": -4.0},
+    "green_roof":        {"heat": -0.10, "shade": 0.0, "veg": 15.0, "imp": 0.0},
+    "cool_roof":         {"heat": -0.08, "shade": 0.0, "veg": 0.0, "imp": 0.0},
+    "cool_wall":         {"heat": -0.04, "shade": 0.0, "veg": 0.0, "imp": 0.0},
+    "misting_system":    {"heat": -0.05, "shade": 0.0, "veg": 0.0, "imp": 0.0},
+    "green_facade":      {"heat": -0.04, "shade": 0.0, "veg": 3.0, "imp": 0.0},
+}
+
+# ---------------------------------------------------------------------------
 # 5. Budget selection
 # ---------------------------------------------------------------------------
 BUDGET = {
