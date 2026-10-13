@@ -182,12 +182,54 @@ def test_kontext_prompt_preserves_architecture_and_lists_zones():
     plan = SpatialDesignPlan(site_summary="s", heat_drivers=[], constraints=[], design_profile="balanced",
                              interventions=specs, overall_design_intent="cool it")
     prompt = build_kontext_redesign_prompt(plan, {"vehicle": 12.0, "person": 0.2})
-    assert prompt.startswith("Add a continuous row of large mature street trees")
+    assert prompt.startswith("Plant young street trees")
     assert "Keep the same buildings, shops, vehicles" in prompt
     assert "people" not in prompt  # below the detection threshold
-    assert "street trees" in prompt and "both sidewalks" in prompt
-    assert "cool reflective paving" in prompt and "the road" in prompt
-    assert prompt.count("street trees") == 1  # tree zones merged into one clause
+    assert "both sidewalks" in prompt
+    assert "reflective coating" in prompt and "the road" in prompt
+    assert prompt.count("young street trees") == 1  # tree zones merged into one clause
+
+
+def _plan(*items):
+    specs = [SpatialInterventionSpec(type=t, target_region="pavement", target_zone=z, priority=i + 1, coverage=0.5,
+                                     placement="p", visual_design="v", reason="r") for i, (t, z) in enumerate(items)]
+    return SpatialDesignPlan(site_summary="s", heat_drivers=[], constraints=[], design_profile="balanced",
+                             interventions=specs, overall_design_intent="i")
+
+
+def test_kontext_prompt_has_no_facade_ivy_by_default():
+    prompt = build_kontext_redesign_prompt(_plan(("tree_canopy", "left_sidewalk"), ("facade_awning", "left_sidewalk")))
+    lowered = prompt.lower()
+    assert "free of ivy and climbing plants" in lowered        # only as a keep instruction
+    assert "add green climbing plants" not in lowered and "ivy-covered" not in lowered
+    assert "mature" not in lowered and "wide leafy" not in lowered
+
+
+def test_kontext_facade_greening_only_when_planned():
+    prompt = build_kontext_redesign_prompt(_plan(("green_facade", "right_sidewalk")))
+    assert "climbing plants on steel trellises" in prompt
+    assert "free of ivy" not in prompt
+
+
+def test_kontext_tree_phrase_states_config_spacing_and_pit():
+    from buildable import get_spec
+    spec = get_spec("tree_canopy")
+    prompt = build_kontext_redesign_prompt(_plan(("tree_canopy", "right_sidewalk")))
+    assert f"spaced about {spec.spacing_m:.0f} m apart" in prompt
+    assert f"{spec.dimensions['pit_m']:.1f} m square tree pits" in prompt
+    assert "the right sidewalk" in prompt
+
+
+@pytest.mark.parametrize("itype,needle", [
+    ("facade_awning", "shopfront awnings"), ("bus_shelter", "bus shelter"), ("solar_canopy", "solar panel pergola"),
+    ("kerb_bioswale", "rain gardens"), ("parking_lane_tree", "kerb build-outs"), ("cool_wall", "reflective tone"),
+])
+def test_kontext_has_phrase_for_each_new_type(itype, needle):
+    assert needle in build_kontext_redesign_prompt(_plan((itype, "left_sidewalk")))
+
+
+def test_kontext_prompt_empty_for_plan_without_buildable_items():
+    assert build_kontext_redesign_prompt(_plan()) == ""
 
 
 def test_kontext_refinement_prompt_keeps_rest_of_scene():

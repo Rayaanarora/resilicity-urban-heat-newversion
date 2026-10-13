@@ -644,6 +644,9 @@ def synthesize_design_intent(
         "distorted building",
         "indoor tiles",
         "plastic foliage",
+        "ivy-covered facade",
+        "climbing plants on buildings",
+        "giant mature trees",
     ]
 
     # 7. Mechanism-first Design Strategy Determination

@@ -1,6 +1,9 @@
 """Spatial prompt synthesis for Generative AI urban redesign."""
 
 from typing import List, Optional
+
+from buildable import get_spec
+
 from .schemas import SpatialDesignPlan, SpatialInterventionSpec, DesignProfile
 
 
@@ -30,10 +33,9 @@ PROFILE_GUIDANCE = {
 
 INTERVENTION_PROMPT_DESCRIPTIONS = {
     "tree_canopy": (
-        "Lush mature urban street trees (such as London plane, neem, or oak) planted along the pedestrian sidewalk "
-        "or road curbside margins. Each tree must have a natural textured wooden trunk firmly grounded with a mulch "
-        "basin, realistic spreading branches, vibrant green leafy canopy, and soft believable cast shadows falling "
-        "across the pavement. Do not place trees inside buildings, through vehicles, or in active traffic lanes."
+        "Young nursery-stock street trees about 4 m tall with slim trunks and modest canopies, planted in square "
+        "tree pits with metal grates at the kerb edge of the sidewalk, evenly spaced, leaving the walkway clear. "
+        "Do not place trees inside buildings, through vehicles, or in active traffic lanes."
     ),
     "cool_pavement": (
         "High-albedo solar-reflective road pavement coating. The weathered dark bitumen asphalt is transformed into "
@@ -64,7 +66,8 @@ NEGATIVE_PROMPTS = (
     "cartoon, drawing, anime, 3d render sticker, neon overlay, colored circles, geometric stamps, "
     "floating trees, trees growing out of buildings, trees blocking traffic, deformed vehicles, "
     "altered building facades, shifted horizon, warped perspective, low resolution, blurry, artifacting, "
-    "unrealistic jungle, sci-fi fantasy buildings"
+    "unrealistic jungle, sci-fi fantasy buildings, ivy-covered buildings, overgrown facades, climbing plants on walls, "
+    "giant mature trees"
 )
 
 
@@ -79,7 +82,10 @@ def build_redesign_prompt(plan: SpatialDesignPlan) -> str:
     # Detail each planned intervention
     intervention_clauses: List[str] = []
     for idx, item in enumerate(plan.interventions, 1):
-        base_desc = INTERVENTION_PROMPT_DESCRIPTIONS.get(item.type, item.visual_design)
+        spec = get_spec(item.type)
+        base_desc = INTERVENTION_PROMPT_DESCRIPTIONS.get(
+            item.type, spec.kontext_phrase("the street").capitalize() + "." if spec else item.visual_design
+        )
         clause = (
             f"Intervention {idx} [{item.type.replace('_', ' ').title()}]: {base_desc} "
             f"Location: {item.placement}. Visual Details: {item.visual_design} (Coverage: {int(item.coverage * 100)}%)."
@@ -212,48 +218,30 @@ PROTECTED_PHRASES = {
 }
 MIN_PROTECTED_PCT = 0.5
 
+# How each kind of zone is named in the edit instruction: (left, right, both, unspecified).
 ZONE_PHRASES = {
-    "left_sidewalk": "the left sidewalk",
-    "right_sidewalk": "the right sidewalk",
-    "roadway": "the road",
-    "rooftop": "visible rooftops",
+    "sidewalk": ("the left sidewalk", "the right sidewalk", "both sidewalks", "the sidewalk"),
+    "kerb": ("the left kerb", "the right kerb", "both kerbs", "the kerb"),
+    "facade": ("the left side of the street", "the right side of the street", "both sides of the street",
+               "the street frontage"),
+    "roadway": ("the road", "the road", "the road", "the road"),
+    "roof": ("visible rooftops", "visible rooftops", "visible rooftops", "visible rooftops"),
 }
 
-KONTEXT_INTERVENTION_PHRASES = {
-    "tree_canopy": (
-        "add a continuous row of large mature street trees with wide leafy green canopies along {zones}, "
-        "planted in tree pits at the curb and casting shade across the pavement"
-    ),
-    "cool_pavement": "resurface {zones} with light-gray cool reflective paving while keeping lane markings and curbs",
-    "permeable_pave": "repave {zones} with light-colored permeable stone pavers",
-    "cool_roof": "coat {zones} with bright white cool roofing",
-    "green_roof": "cover {zones} with green vegetated roofs",
-    "shade_structure": "add light fabric shade canopies on slender poles over {zones}",
-}
-
-DEFAULT_ZONES = {
-    "tree_canopy": "both sidewalks",
-    "cool_pavement": "the road",
-    "permeable_pave": "the sidewalks",
-    "cool_roof": "visible rooftops",
-    "green_roof": "visible rooftops",
-    "shade_structure": "the sidewalk",
-}
-
-# Architectural cooling applied to every redesign: shading and greening the facades
-# without replacing the buildings themselves.
-KONTEXT_ARCHITECTURE = (
-    "Add green climbing plants on parts of the sun-facing walls and fabric awnings over ground-floor doors."
-)
+# Kept out unless the plan explicitly includes a green facade: ivy-covered buildings are not buildable.
+KONTEXT_FACADE_KEEP = "Keep the building facades free of ivy and climbing plants."
 
 
-def _join_zones(zones: List[str]) -> str:
-    phrases = list(dict.fromkeys(ZONE_PHRASES.get(z, z.replace("_", " ")) for z in zones))
-    if {"the left sidewalk", "the right sidewalk"} <= set(phrases):
-        phrases = ["both sidewalks"] + [p for p in phrases if p not in ("the left sidewalk", "the right sidewalk")]
-    if len(phrases) <= 1:
-        return phrases[0] if phrases else ""
-    return ", ".join(phrases[:-1]) + " and " + phrases[-1]
+def _where(zone_kind: str, zones: List[str]) -> str:
+    left, right, both, unspecified = ZONE_PHRASES.get(zone_kind, ZONE_PHRASES["sidewalk"])
+    sides = set(zones)
+    if {"left_sidewalk", "right_sidewalk"} <= sides:
+        return both
+    if "left_sidewalk" in sides:
+        return left
+    if "right_sidewalk" in sides:
+        return right
+    return unspecified
 
 
 def _keep_list(protected_objects: Optional[dict]) -> str:
@@ -267,31 +255,32 @@ def _keep_list(protected_objects: Optional[dict]) -> str:
 def build_kontext_redesign_prompt(plan: SpatialDesignPlan, protected_objects: Optional[dict] = None) -> str:
     """Build a concise FLUX.1 Kontext edit instruction from the spatial design plan.
 
-    The edit leads with concrete, emphatic additions, then a short keep-list built from what
-    segmentation detected (protected_objects: category -> % of image). Phrasing it as a
-    "redesign" makes Kontext rebuild the street as a generic one; an over-long keep-list makes
-    it change almost nothing.
+    Each planned intervention contributes its buildable catalog phrase (dimensions and spacing from
+    buildable/config.py), then a short keep-list built from what segmentation detected
+    (protected_objects: category -> % of image). Phrasing it as a "redesign" makes Kontext rebuild
+    the street as a generic one; an over-long keep-list makes it change almost nothing.
+    Returns "" when the plan has no buildable interventions.
     """
     zones_by_type: dict = {}
     for item in sorted(plan.interventions, key=lambda i: i.priority):
-        if item.type not in KONTEXT_INTERVENTION_PHRASES:
+        if get_spec(item.type) is None:
             continue
         zones = zones_by_type.setdefault(item.type, [])
         if item.target_zone:
             zones.append(item.target_zone)
-
     if not zones_by_type:
-        zones_by_type = {"tree_canopy": [], "cool_pavement": []}
+        return ""
 
     clauses = []
     for itype, zones in zones_by_type.items():
-        where = _join_zones(zones) or DEFAULT_ZONES[itype]
-        clauses.append(KONTEXT_INTERVENTION_PHRASES[itype].format(zones=where))
+        spec = get_spec(itype)
+        clauses.append(spec.kontext_phrase(_where(spec.zone_kind, zones)))
 
     edits = "; ".join(clauses)
     edits = edits[0].upper() + edits[1:]
+    facade_keep = "" if "green_facade" in zones_by_type else f" {KONTEXT_FACADE_KEEP}"
     return (
-        f"{edits}. {KONTEXT_ARCHITECTURE} "
+        f"{edits}.{facade_keep} "
         f"Keep the same {_keep_list(protected_objects)}, and the same camera angle and perspective. "
         "Photorealistic photograph."
     )

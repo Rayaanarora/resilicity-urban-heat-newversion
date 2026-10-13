@@ -39,6 +39,7 @@ if env_path.exists():
             os.environ.setdefault(k.strip(), v.strip())
 
 from image_generation import (
+    GenerationResult,
     RedesignEngine,
     build_kontext_redesign_prompt,
     build_kontext_refinement_prompt,
@@ -304,10 +305,17 @@ async def analyze_and_redesign(
     #    Results are cached on disk by the engine, so re-running the same photo costs nothing.
     plan_dict = plan.dict()
     prompt = build_kontext_redesign_prompt(plan, scene.to_dict().get("protected_objects_summary"))
-    if refinement_prompt:
+    if refinement_prompt and prompt:
         prompt = f"{prompt} Additionally: {refinement_prompt.strip()}"
 
-    result = await redesign_engine.generate(pil_img, content, prompt, quality_tier=quality_tier)
+    if prompt:
+        result = await redesign_engine.generate(pil_img, content, prompt, quality_tier=quality_tier)
+    else:
+        # Nothing buildable was selected: do not spend generation quota on an empty edit.
+        result = GenerationResult(
+            None, "none", "",
+            error="No buildable interventions were selected for this street; see the rejected candidates for reasons.",
+        )
     elapsed_ms = int((time.time() - t0) * 1000)
     thermal = compute_thermal_impact(surfaces, [i.dict() for i in plan.interventions])
 
