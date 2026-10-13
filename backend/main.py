@@ -43,6 +43,7 @@ from image_generation import (
     RedesignEngine,
     build_kontext_redesign_prompt,
     build_kontext_refinement_prompt,
+    illustrated_zones,
     parse_refinement_intent,
     UnifiedRedesignResponse,
     RefinementIntent,
@@ -346,6 +347,8 @@ async def analyze_and_redesign(
             "generation_time_ms": elapsed_ms,
             "refinement_count": 0,
             "error_message": None,
+            # Kontext draws only the top-priority items; the full plan is in implementation_plan.
+            "illustrated_interventions": list(illustrated_zones(plan)),
         }
         validation = result.validation.dict() if result.validation else {
             "is_valid": True,

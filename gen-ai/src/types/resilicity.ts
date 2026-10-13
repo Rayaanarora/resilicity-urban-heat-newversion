@@ -261,6 +261,8 @@ export interface VisualizationOutput {
   generation_time_ms: number;
   refinement_count: number;
   error_message?: string | null;
+  cached?: boolean;
+  illustrated_interventions?: string[];
 }
 
 export interface ValidationReport {

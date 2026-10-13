@@ -408,6 +408,12 @@ export const BeforeAfterPreview: React.FC = () => {
       <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl px-4 py-2.5 flex items-center justify-between text-[11px] text-amber-900 font-sans">
         <span>
           <strong>Illustrative only:</strong> the AI image shows design intent and is not to scale; the specification (implementation plan and dimensioned cross-section below) is the deliverable. Cooling figures come from the planner and the heat model, not from the image.
+          {visualizationOutput?.illustrated_interventions?.length ? (
+            <>
+              {' '}The image shows only the top-priority items:{' '}
+              <strong>{visualizationOutput.illustrated_interventions.map((t) => t.replace(/_/g, ' ')).join(', ')}</strong>.
+            </>
+          ) : null}
         </span>
         <span className="font-mono text-amber-700 font-semibold shrink-0 ml-3">ML ΔT Assessment</span>
       </div>

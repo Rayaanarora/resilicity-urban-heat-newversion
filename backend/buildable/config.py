@@ -328,3 +328,12 @@ BUDGET = {
     "inr_per_lakh": 100_000,
     "max_interventions_with_budget": 8,
 }
+
+# ---------------------------------------------------------------------------
+# 6. Illustrative image
+# ---------------------------------------------------------------------------
+RENDERING = {
+    # FLUX.1 Kontext reliably executes only one or two edits per call, so the image illustrates the
+    # highest-priority intervention types; the full plan stays in the implementation plan.
+    "max_image_items": 2,
+}

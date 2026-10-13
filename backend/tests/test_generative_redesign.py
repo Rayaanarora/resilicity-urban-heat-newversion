@@ -452,3 +452,16 @@ def test_refine_design_endpoint_handles_failure_gracefully(client):
         assert data["status"] == "unavailable"
         assert "quota" in data["error_message"].lower()
         assert data["image_url"] is None
+
+
+def test_kontext_prompt_draws_only_top_priority_types():
+    from buildable.config import RENDERING
+    from image_generation import illustrated_zones
+    plan = _plan(("tree_canopy", "right_sidewalk"), ("permeable_pave", "left_sidewalk"),
+                 ("tree_canopy", "left_sidewalk"), ("facade_awning", "right_sidewalk"), ("cool_wall", "left_sidewalk"))
+    assert RENDERING["max_image_items"] == 2
+    assert list(illustrated_zones(plan)) == ["tree_canopy", "permeable_pave"]
+    prompt = build_kontext_redesign_prompt(plan)
+    assert "both sidewalks" in prompt          # same-type items on both sides still count as one
+    assert "permeable concrete pavers" in prompt
+    assert "awnings" not in prompt and "reflective tone" not in prompt

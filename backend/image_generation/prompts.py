@@ -3,6 +3,7 @@
 from typing import List, Optional
 
 from buildable import get_spec
+from buildable.config import RENDERING
 
 from .schemas import SpatialDesignPlan, SpatialInterventionSpec, DesignProfile
 
@@ -252,6 +253,23 @@ def _keep_list(protected_objects: Optional[dict]) -> str:
     return ", ".join(items)
 
 
+def illustrated_zones(plan: SpatialDesignPlan) -> dict:
+    """Intervention types the image will show (type -> zones), highest priority first.
+
+    Same-type items on both sides count as one; at most RENDERING["max_image_items"] types.
+    """
+    zones_by_type: dict = {}
+    for item in sorted(plan.interventions, key=lambda i: i.priority):
+        if get_spec(item.type) is None:
+            continue
+        if item.type not in zones_by_type and len(zones_by_type) >= RENDERING["max_image_items"]:
+            continue
+        zones = zones_by_type.setdefault(item.type, [])
+        if item.target_zone:
+            zones.append(item.target_zone)
+    return zones_by_type
+
+
 def build_kontext_redesign_prompt(plan: SpatialDesignPlan, protected_objects: Optional[dict] = None) -> str:
     """Build a concise FLUX.1 Kontext edit instruction from the spatial design plan.
 
@@ -259,15 +277,10 @@ def build_kontext_redesign_prompt(plan: SpatialDesignPlan, protected_objects: Op
     buildable/config.py), then a short keep-list built from what segmentation detected
     (protected_objects: category -> % of image). Phrasing it as a "redesign" makes Kontext rebuild
     the street as a generic one; an over-long keep-list makes it change almost nothing.
+    Only the top RENDERING["max_image_items"] types are drawn (see illustrated_zones).
     Returns "" when the plan has no buildable interventions.
     """
-    zones_by_type: dict = {}
-    for item in sorted(plan.interventions, key=lambda i: i.priority):
-        if get_spec(item.type) is None:
-            continue
-        zones = zones_by_type.setdefault(item.type, [])
-        if item.target_zone:
-            zones.append(item.target_zone)
+    zones_by_type = illustrated_zones(plan)
     if not zones_by_type:
         return ""
 

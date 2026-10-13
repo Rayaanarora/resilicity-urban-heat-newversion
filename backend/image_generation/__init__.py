@@ -9,6 +9,7 @@ from .prompts import (
     build_kontext_refinement_prompt,
     build_redesign_prompt,
     build_refinement_prompt,
+    illustrated_zones,
 )
 from .schemas import (
     DesignProfile,
@@ -35,6 +36,7 @@ __all__ = [
     "build_kontext_refinement_prompt",
     "build_redesign_prompt",
     "build_refinement_prompt",
+    "illustrated_zones",
     "DesignProfile",
     "SpatialInterventionSpec",
     "SpatialDesignPlan",
