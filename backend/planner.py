@@ -35,6 +35,9 @@ from image_generation.schemas import (
     SpatialInterventionSpec,
 )
 from buildable import estimate_street_metrics, get_spec
+from buildable.config import CLEARANCES
+from buildable.gating import GateResult, SiteContext, gate
+from buildable.observations import observe_site
 from scene_understanding import SceneUnderstanding, analyze_scene
 
 logger = logging.getLogger("resilicity.planner")
@@ -381,12 +384,7 @@ def evaluate_interactions(
             conflicts.append("Rooftops are not visible from street camera viewpoint; rooftop cooling rejected for spatial incoherence.")
             return -1.0, synergies, conflicts, True
 
-    # Conflict 3: Sidewalk Width Restriction for Trees
-    if candidate_type == "tree_canopy":
-        sw_zone = getattr(scene, target_zone, None)
-        if sw_zone and sw_zone.available_width_proxy < 0.08 and sw_zone.relative_area_pct < 0.8:
-            conflicts.append(f"{target_zone.replace('_', ' ').capitalize()} width is too constrained for tree root basins and pedestrian passage.")
-            return -1.0, synergies, conflicts, True
+    # Tree-pit fit is decided earlier by metric gating (buildable.gating), not pixel proxies.
 
     # Synergy 1: Trees + Permeable Pavers
     if candidate_type == "permeable_pave" and "tree_canopy" in chosen_types:
@@ -986,6 +984,7 @@ def generate_spatial_plan(
     design_profile: Optional[DesignProfile] = None,
     requested_types: Optional[List[str]] = None,
     road_width_m: Optional[float] = None,
+    climate_zone: Optional[str] = None,
 ) -> SpatialDesignPlan:
     """Autonomously generate an intelligent urban resilience design plan.
 
@@ -1013,6 +1012,20 @@ def generate_spatial_plan(
     # Step 1b: Metric widths (carriageway width as scale reference)
     street_metrics = estimate_street_metrics(
         scene.road_mask, scene.left_sidewalk_mask, scene.right_sidewalk_mask, road_width_m
+    )
+    site_ctx = SiteContext(
+        metrics=street_metrics,
+        observations=observe_site(
+            seg_result.get("raw_preds"), scene.road_mask, scene.left_sidewalk_mask, scene.right_sidewalk_mask
+        ),
+        climate_zone=(climate_zone or CLEARANCES["default_climate_zone"]).strip().lower(),
+        canyon_hw_proxy=float(geom.height_to_width_proxy),
+        canyon_strength=float(geom.street_canyon_strength),
+        wall_density=float(geom.building_wall_density),
+        solar_exposure={"left_sidewalk": ls.solar_exposure, "right_sidewalk": rs.solar_exposure,
+                        "roadway": road.solar_exposure},
+        heritage_roadway=bool(road_mat.get("is_heritage", False)),
+        heritage_material=str(road_mat.get("material", "")),
     )
 
     # Step 2: Build Heat-Driver Diagnosis
@@ -1042,6 +1055,15 @@ def generate_spatial_plan(
     candidates: List[Dict[str, Any]] = []
     rejected_candidates: List[Dict[str, Any]] = []
 
+    def admit(itype: str, zone: str) -> Optional[GateResult]:
+        """Run buildability gating; record rejections with reasons and return the result if allowed."""
+        result = gate(itype, zone, site_ctx)
+        if not result.allowed:
+            rejected_candidates.append(result.rejection(itype, zone))
+            return None
+        rejected_candidates.extend(result.partial_rejections)
+        return result
+
     # Record rejected forms from DesignIntent directly
     for rej_form in design_intent.rejected_interventions:
         rejected_candidates.append({
@@ -1053,7 +1075,8 @@ def generate_spatial_plan(
 
     # Check Left Sidewalk Tree Canopy
     can_plant_left = (ls.relative_area_pct >= 1.0 or ls.available_width_proxy >= 0.05 or surfaces.get("pavement", 0.0) >= 1.0 or surfaces.get("road", 0.0) >= 15.0)
-    if can_plant_left:
+    left_gate = admit("tree_canopy", "left_sidewalk")
+    if can_plant_left and left_gate:
         u_val, ev_list, feas, cov = compute_intervention_utility("tree_canopy", scene, "left_sidewalk", profile)
         if len(ev_list) >= 3 and feas >= 0.25:
             candidates.append({
@@ -1069,6 +1092,7 @@ def generate_spatial_plan(
                 "where": "Curbside planting alignment along left sidewalk margin",
                 "why": "Intercepts direct solar exposure on pedestrian path and cools ambient air via evapotranspiration",
                 "placement": f"{CATALOG['tree_canopy']['placement']} (left sidewalk)",
+                "conditions": left_gate.conditions,
                 "visual_design": CATALOG["tree_canopy"]["visual_design"],
                 "reason": CATALOG["tree_canopy"]["reason"],
                 "cooling": round(1.2 * (0.6 + 0.4 * cov), 1),
@@ -1076,7 +1100,8 @@ def generate_spatial_plan(
 
     # Check Right Sidewalk Tree Canopy
     can_plant_right = (rs.relative_area_pct >= 1.0 or rs.available_width_proxy >= 0.05 or surfaces.get("pavement", 0.0) >= 1.0 or surfaces.get("road", 0.0) >= 15.0)
-    if can_plant_right and (rs.solar_exposure >= 0.35 or surfaces.get("pavement", 0.0) >= 5.0):
+    right_gate = admit("tree_canopy", "right_sidewalk")
+    if right_gate and can_plant_right and (rs.solar_exposure >= 0.35 or surfaces.get("pavement", 0.0) >= 5.0):
         u_val, ev_list, feas, cov = compute_intervention_utility("tree_canopy", scene, "right_sidewalk", profile)
         if len(ev_list) >= 3 and feas >= 0.25:
             candidates.append({
@@ -1092,6 +1117,7 @@ def generate_spatial_plan(
                 "where": "Curbside planting alignment along right sidewalk margin",
                 "why": "Provides solar interception and continuous pedestrian shade on right sidewalk corridor",
                 "placement": f"{CATALOG['tree_canopy']['placement']} (right sidewalk)",
+                "conditions": right_gate.conditions,
                 "visual_design": CATALOG["tree_canopy"]["visual_design"],
                 "reason": CATALOG["tree_canopy"]["reason"],
                 "cooling": round(1.2 * (0.6 + 0.4 * cov), 1),
@@ -1099,7 +1125,8 @@ def generate_spatial_plan(
 
     # Check Tensile Shade Structure
     active_sw = ls if ls.shade_structure_feasibility >= rs.shade_structure_feasibility else rs
-    if active_sw.relative_area_pct >= 1.0 or surfaces.get("pavement", 0.0) >= 5.0:
+    shade_gate = admit("shade_structure", active_sw.zone_name)
+    if shade_gate and (active_sw.relative_area_pct >= 1.0 or surfaces.get("pavement", 0.0) >= 5.0):
         u_val, ev_list, feas, cov = compute_intervention_utility("shade_structure", scene, active_sw.zone_name, profile)
         if len(ev_list) >= 3 and feas >= 0.30:
             candidates.append({
@@ -1117,19 +1144,14 @@ def generate_spatial_plan(
                 "placement": f"Suspended above {active_sw.zone_name.replace('_', ' ')} pedestrian gathering zone anchored by slender steel columns",
                 "visual_design": CATALOG["shade_structure"]["visual_design"],
                 "reason": CATALOG["shade_structure"]["reason"],
+                "conditions": shade_gate.conditions,
                 "cooling": round(0.7 * cov, 1),
             })
 
     # Check Cool Pavement on Roadway
     if road.relative_area_pct >= 5.0 or road.road_width_proxy >= 0.15 or surfaces.get("road", 0.0) >= 10.0:
-        if mat_preservation and mat_preservation.preserve:
-            rejected_candidates.append({
-                "type": "cool_pavement",
-                "target_zone": "roadway",
-                "reason": f"Preserving distinctive {mat_preservation.material.replace('_', ' ')} roadway heritage; synthetic coating rejected.",
-                "conflict": "heritage_preservation",
-            })
-        else:
+        cp_gate = admit("cool_pavement", "roadway")
+        if cp_gate:
             u_val, ev_list, feas, cov = compute_intervention_utility("cool_pavement", scene, "roadway", profile)
             if len(ev_list) >= 3 and feas >= 0.30:
                 candidates.append({
@@ -1228,15 +1250,20 @@ def generate_spatial_plan(
         remaining_candidates.pop(best_cand_idx)
 
     # Step 7: Guaranteed Safe Fallback if nothing was chosen
+    fallback_gate, fallback_zone = next(
+        ((g, z) for z in ("left_sidewalk", "right_sidewalk") for g in (gate("tree_canopy", z, site_ctx),) if g.allowed),
+        (None, None),
+    )
     if not chosen_candidates:
         if candidates:
             chosen_candidates.append(candidates[0])
-        else:
+        elif fallback_zone:
             t_meta = CATALOG["tree_canopy"]
             chosen_candidates.append({
                 "type": "tree_canopy",
                 "target_region": "pavement" if surfaces.get("pavement", 0.0) > 0 else "road",
-                "target_zone": "left_sidewalk",
+                "target_zone": fallback_zone,
+                "conditions": fallback_gate.conditions,
                 "utility": 0.85,
                 "evidence": [
                     "Pedestrian walking zone exposed to direct overhead solar insolation",
@@ -1284,6 +1311,7 @@ def generate_spatial_plan(
             heat_mechanism=item.get("heat_mechanism", CATALOG.get(item["type"], {}).get("heat_mechanism", "shading")),
             marginal_utility=item.get("marginal_utility", round(item["utility"], 3)),
             interaction_with_others=item.get("interaction_with_others", {}),
+            spatial_constraints=item.get("conditions", []),
             expected_benefit={
                 "estimated_localized_cooling_c": item.get("cooling", 0.8),
                 "target_zone": item["target_zone"],

@@ -101,6 +101,7 @@ def estimate_street_metrics(
         uncertainty_pct=uncertainty,
         road_truncated=road_truncated,
         rows_used=len(rows),
+        scale_available=True,
         reliable=not road_truncated and (left_m is not None or right_m is not None),
         notes=notes,
     )

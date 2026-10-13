@@ -27,6 +27,31 @@ METRICS = {
 }
 
 # ---------------------------------------------------------------------------
+# 2. Clearances and geometry rules used by gating
+# ---------------------------------------------------------------------------
+CLEARANCES = {
+    "min_clear_walkway_m": 1.8,            # clear pedestrian path that must remain after any fixture
+    "kerb_buffer_m": 0.3,                  # buffer between kerb face and pit / post edge
+    "min_vertical_clearance_m": 2.4,       # headroom under awnings and canopies
+    "junction_sight_clearance_m": 15.0,    # no trees within this distance of a junction (sight triangle)
+    "max_pole_strip_frac": 0.04,           # pole/lamp/signal pixels in the kerb strip above this -> no pits
+    "max_vehicle_strip_frac": 0.15,        # vehicles parked on/along the sidewalk strip above this -> no pits
+    "max_person_strip_frac": 0.10,         # dense pedestrian/vendor use above this -> no pits
+    "parking_lane_width_m": 2.0,           # width of a kerbside parking lane / build-out
+    "min_carriageway_after_buildout_m": 6.0,  # carriageway that must remain after a kerb build-out
+    "deep_canyon_hw_proxy_min": 0.7,       # street-canyon H/W proxy above which roadway cool pavement is allowed
+    "min_wall_density_for_cool_wall": 0.15,
+    "min_wall_density_for_awning": 0.10,
+    "min_solar_exposure_for_pv": 0.45,
+    "max_canyon_strength_for_pv": 0.60,
+    "min_road_width_for_bus_shelter_m": 7.0,
+    "humid_climates": ["tropical", "tropical_humid", "tropical_monsoon", "humid_subtropical"],
+    "default_climate_zone": "tropical_humid",
+    "street_length_m": 100.0,              # implementation plan quantities are per this length
+    "default_sidewalk_m_if_unmeasured": 2.0,  # only used for quantities, always flagged
+}
+
+# ---------------------------------------------------------------------------
 # 3. Buildable catalog
 #    cost_inr: (low, high) per unit. cooling_c: (low, central, high) indicative localized
 #    cooling at full coverage; NOT air temperature for the whole street.

@@ -131,3 +131,116 @@ def test_awning_depth_and_planner_text_come_from_config():
     spacing = get_spec("tree_canopy").spacing_m
     assert f"{spacing:.0f} m apart" in planner.CATALOG["tree_canopy"]["placement"]
     assert set(planner.CATALOG) <= set(catalog_types())
+
+
+# ---------------------------------------------------------------------------
+# 3. Gating rules
+# ---------------------------------------------------------------------------
+from buildable import StreetMetrics
+from buildable.config import CLEARANCES
+from buildable.gating import SiteContext, gate
+from buildable.observations import SiteObservations, observe_site
+
+TREE_REQUIRED_M = get_spec("tree_canopy").dimensions["pit_m"] + CLEARANCES["kerb_buffer_m"] + CLEARANCES["min_clear_walkway_m"]
+
+
+def _ctx(left=4.0, right=4.0, scale=True, obstacles=None, junction=None, climate="tropical_humid",
+         hw=1.0, heritage=False, road=7.0):
+    def band(v):
+        return None if v is None else [round(v * 0.7, 2), round(v * 1.3, 2)]
+    metrics = StreetMetrics(road_width_m=road, left_sidewalk_m=left, right_sidewalk_m=right,
+                            left_range_m=band(left), right_range_m=band(right), scale_available=scale,
+                            reliable=scale, rows_used=50 if scale else 0)
+    obs = SiteObservations(
+        obstacle_fractions=obstacles or {z: {"pole": 0.0, "vehicle": 0.0, "person": 0.0}
+                                         for z in ("left_sidewalk", "right_sidewalk")},
+        junction_suspected=junction or {"left_sidewalk": False, "right_sidewalk": False},
+    )
+    return SiteContext(metrics=metrics, observations=obs, climate_zone=climate, canyon_hw_proxy=hw,
+                       canyon_strength=0.5, wall_density=0.3,
+                       solar_exposure={"left_sidewalk": 0.7, "right_sidewalk": 0.7, "roadway": 0.7},
+                       heritage_roadway=heritage, heritage_material="historic_cobblestone" if heritage else "")
+
+
+def test_gate_tree_pit_needs_clear_walkway_after_pit():
+    narrow = gate("tree_canopy", "left_sidewalk", _ctx(left=TREE_REQUIRED_M - 0.5))
+    assert not narrow.allowed and narrow.rule == "tree_canopy_clear_width"
+    assert f"{TREE_REQUIRED_M:.1f} m" in narrow.reason and narrow.measured["sidewalk_m"] < TREE_REQUIRED_M
+    wide = gate("tree_canopy", "left_sidewalk", _ctx(left=TREE_REQUIRED_M * 1.6))
+    assert wide.allowed and not wide.conditions
+
+
+def test_gate_tree_borderline_width_requires_site_verification():
+    res = gate("tree_canopy", "left_sidewalk", _ctx(left=TREE_REQUIRED_M + 0.1))
+    assert res.allowed and any("verify on site" in c for c in res.conditions)
+
+
+def test_gate_tree_rejected_when_road_measured_but_no_sidewalk():
+    res = gate("tree_canopy", "left_sidewalk", _ctx(left=None))
+    assert not res.allowed and res.rule == "no_measurable_sidewalk"
+
+
+def test_gate_tree_without_scale_requires_survey():
+    res = gate("tree_canopy", "left_sidewalk", _ctx(left=None, scale=False))
+    assert res.allowed and any("survey" in c for c in res.conditions)
+
+
+def test_gate_tree_junction_sight_line_setback():
+    res = gate("tree_canopy", "left_sidewalk", _ctx(junction={"left_sidewalk": True, "right_sidewalk": False}))
+    assert res.allowed
+    assert res.partial_rejections and res.partial_rejections[0]["rule"] == "junction_sight_line"
+    assert f"{CLEARANCES['junction_sight_clearance_m']:.0f} m" in res.partial_rejections[0]["reason"]
+
+
+@pytest.mark.parametrize("group,limit_key", [("pole", "max_pole_strip_frac"), ("vehicle", "max_vehicle_strip_frac"),
+                                             ("person", "max_person_strip_frac")])
+def test_gate_tree_rejected_near_poles_vehicles_people(group, limit_key):
+    fr = {"pole": 0.0, "vehicle": 0.0, "person": 0.0}
+    fr[group] = CLEARANCES[limit_key] + 0.05
+    res = gate("tree_canopy", "right_sidewalk",
+               _ctx(obstacles={"left_sidewalk": dict(fr), "right_sidewalk": fr}))
+    assert not res.allowed and res.rule == f"tree_near_{group}"
+
+
+def test_gate_misting_rejected_in_humid_tropics_only():
+    humid = gate("misting_system", "left_sidewalk", _ctx(climate="tropical_humid"))
+    assert not humid.allowed and humid.rule == "misting_humid_climate"
+    assert gate("misting_system", "left_sidewalk", _ctx(climate="arid")).allowed
+
+
+def test_gate_cool_pavement_only_in_deep_canyons():
+    req = CLEARANCES["deep_canyon_hw_proxy_min"]
+    open_street = gate("cool_pavement", "roadway", _ctx(hw=req - 0.2))
+    assert not open_street.allowed and open_street.rule == "cool_pavement_open_street"
+    assert "pedestrians" in open_street.reason
+    assert gate("cool_pavement", "roadway", _ctx(hw=req + 0.2)).allowed
+
+
+def test_gate_heritage_roadway_still_rejected():
+    res = gate("cool_pavement", "roadway", _ctx(hw=2.0, heritage=True))
+    assert not res.allowed and res.rule == "heritage_preservation" and "cobblestone" in res.reason
+
+
+def test_observe_site_detects_poles_in_kerb_strip():
+    road, left, right = _street_masks()
+    raw = np.zeros(road.shape, np.int32)
+    raw[200:260, 300:304] = 93  # utility pole just right of the road, beside the right sidewalk
+    obs = observe_site(raw, road, left, right)
+    assert obs.obstacle_fractions["right_sidewalk"]["pole"] > 0
+    assert obs.obstacle_fractions["left_sidewalk"]["pole"] == 0
+
+
+def test_planner_writes_gating_reasons_to_rejected_candidates():
+    from PIL import Image
+    from planner import generate_spatial_plan
+    w, h = 640, 480
+    raw = np.full((h, w), 2, np.int32)
+    raw[: int(h * 0.55), :] = 0
+    raw[int(h * 0.55):, :60] = 3          # ~1.3 m sidewalks on a 7 m (320 px) road: too narrow for pits
+    raw[int(h * 0.55):, 60:380] = 6
+    raw[int(h * 0.55):, 380:440] = 3
+    plan = generate_spatial_plan(Image.new("RGB", (w, h)), {"road": 35.0, "pavement": 10.0, "wall": 40.0},
+                                 seg_result={"raw_preds": raw, "masks": [], "protected_objects": []}, road_width_m=7.0)
+    tree_rejections = [r for r in plan.rejected_candidates if r["type"] == "tree_canopy"]
+    assert tree_rejections and all(r["reason"] and r["rule"] for r in tree_rejections)
+    assert all(iv.type != "tree_canopy" for iv in plan.interventions)

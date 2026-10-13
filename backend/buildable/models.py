@@ -16,6 +16,7 @@ class StreetMetrics(BaseModel):
     uncertainty_pct: int = Field(default=30, description="+/- percentage applied to every estimate")
     road_truncated: bool = Field(default=False, description="Carriageway runs off the frame, biasing the scale")
     rows_used: int = Field(default=0, description="Image rows used for the estimate")
+    scale_available: bool = Field(default=False, description="A carriageway scale was measured (widths can be judged)")
     reliable: bool = Field(default=False, description="False when the estimate should not be used without a site survey")
     notes: List[str] = Field(default_factory=list)
 

@@ -87,11 +87,25 @@ def test_validate_image_normalizes_aspect_ratio_without_distortion():
 # ---------------------------------------------------------------------------
 # Spatial Planner & Design Profile Tests
 # ---------------------------------------------------------------------------
+def _measurable_street_seg(w=640, h=480):
+    """Walls above, then 3.5 m sidewalks either side of a 7 m road (160/320/160 px)."""
+    import numpy as np
+    raw = np.full((h, w), 2, dtype=np.int32)          # sky
+    raw[: int(h * 0.55), :160] = 0                    # wall
+    raw[: int(h * 0.55), 480:] = 0
+    raw[int(h * 0.55):, :160] = 3                     # sidewalk
+    raw[int(h * 0.55):, 160:480] = 6                  # road
+    raw[int(h * 0.55):, 480:] = 3
+    return {"raw_preds": raw, "masks": [], "protected_objects": []}
+
+
 def test_spatial_planner_generates_valid_schema():
     img = Image.new("RGB", (640, 480))
     surfaces = {"road": 35.0, "wall": 25.0, "pavement": 15.0, "vegetation": 5.0, "roof": 0.0}
 
-    plan = generate_spatial_plan(img, surfaces, design_profile="balanced")
+    plan = generate_spatial_plan(img, surfaces, seg_result=_measurable_street_seg(), design_profile="balanced",
+                                 road_width_m=7.0)
+    assert plan.street_metrics.left_sidewalk_m and plan.street_metrics.left_sidewalk_m > 3.0
     assert isinstance(plan, SpatialDesignPlan)
     assert len(plan.interventions) > 0
     assert plan.design_profile == "balanced"
@@ -101,6 +115,13 @@ def test_spatial_planner_generates_valid_schema():
     assert first_iv.type in ("tree_canopy", "cool_pavement", "permeable_pave")
     assert first_iv.feasibility > 0.5
     assert first_iv.cooling_impact_c > 0.0
+
+
+def test_unscaled_site_trees_carry_a_survey_condition():
+    # No carriageway in the photo: widths cannot be judged, so trees need a site survey first.
+    plan = generate_spatial_plan(Image.new("RGB", (640, 480)), {"road": 35.0, "pavement": 15.0})
+    trees = [iv for iv in plan.interventions if iv.type == "tree_canopy"]
+    assert trees and all(any("survey" in c for c in iv.spatial_constraints) for iv in trees)
 
 
 def test_design_profiles_influence_plan():
