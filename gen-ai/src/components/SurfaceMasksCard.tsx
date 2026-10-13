@@ -19,7 +19,7 @@ export const SurfaceMasksCard: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <span className="rc-card-header-label">SCENE UNDERSTANDING</span>
-          <h3 className="text-lg font-bold text-slate-900 font-sans">Surface masks</h3>
+          <h3 className="text-lg font-semibold text-slate-900 font-sans">Surface masks</h3>
         </div>
 
         {/* Master Toggle Switch */}
@@ -70,7 +70,7 @@ export const SurfaceMasksCard: React.FC = () => {
                   >
                     {isVisible && <Check className="w-2.5 h-2.5 stroke-[3]" />}
                   </div>
-                  <span className="font-semibold">{mask.label}</span>
+                  <span className="font-medium">{mask.label}</span>
                 </div>
                 <div className="flex items-center gap-2 font-mono">
                   {mask.pixelCount ? (
@@ -78,14 +78,14 @@ export const SurfaceMasksCard: React.FC = () => {
                       {mask.pixelCount.toLocaleString()} px
                     </span>
                   ) : null}
-                  <span className="font-bold text-slate-700">{mask.areaPercentage}%</span>
+                  <span className="font-medium text-slate-700">{mask.areaPercentage}%</span>
                 </div>
               </div>
 
               {/* Progress Bar Container */}
               <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
                 <div
-                  className="h-full rounded-full transition-all duration-500"
+                  className="h-full rc-bar transition-all duration-500"
                   style={{
                     width: `${mask.areaPercentage}%`,
                     backgroundColor: mask.color,

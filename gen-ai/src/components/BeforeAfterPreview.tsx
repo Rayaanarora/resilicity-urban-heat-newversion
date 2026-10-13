@@ -7,12 +7,10 @@ import {
   Minimize2,
   Columns,
   Download,
-  Sparkles,
   AlertCircle,
   Trees,
   Layers,
   CloudSun,
-  Cpu,
 } from 'lucide-react';
 
 export const BeforeAfterPreview: React.FC = () => {
@@ -92,20 +90,19 @@ export const BeforeAfterPreview: React.FC = () => {
         <div>
           <div className="flex items-center gap-2">
             <span className="rc-card-header-label">RESILIENT STREETSCAPE REDESIGN</span>
-            <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 font-bold border border-emerald-200 flex items-center gap-1">
-              <Cpu className="w-3 h-3 text-emerald-600" />
+            <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 font-medium border border-emerald-200 flex items-center gap-1">
               AI Resilient Concept · ML Thermal Impact
             </span>
-            <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 font-bold border border-amber-200">
+            <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 font-medium border border-amber-200">
               Illustrative · the spec is the deliverable
             </span>
           </div>
           <h3
-            className={`text-xl font-bold font-sans ${
+            className={`text-xl font-semibold font-sans ${
               isFullscreen ? 'text-white' : 'text-slate-900'
             }`}
           >
-            Autonomous Resilient Urban Redesign
+            Before and after
           </h3>
         </div>
 
@@ -115,7 +112,7 @@ export const BeforeAfterPreview: React.FC = () => {
           <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80">
             <button
               onClick={() => setViewMode('slider')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                 viewMode === 'slider'
                   ? 'bg-white text-slate-900 shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
@@ -127,7 +124,7 @@ export const BeforeAfterPreview: React.FC = () => {
             </button>
             <button
               onClick={() => setViewMode('side-by-side')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                 viewMode === 'side-by-side'
                   ? 'bg-white text-slate-900 shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
@@ -180,7 +177,7 @@ export const BeforeAfterPreview: React.FC = () => {
         <div className="bg-rose-50 border border-rose-300 rounded-xl p-4 flex items-start gap-3 text-rose-900 text-sm">
           <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
           <div className="flex flex-col gap-1">
-            <span className="font-bold">AI redesign unavailable</span>
+            <span className="font-medium">AI redesign unavailable</span>
             <span className="text-xs text-rose-800">
               {visualizationOutput?.error_message ||
                 'Local SDXL Inpainting could not complete generation on this photograph. The original image is not shown as a fake result.'}
@@ -230,7 +227,7 @@ export const BeforeAfterPreview: React.FC = () => {
                 <div className="absolute inset-0 bg-slate-900/95 flex flex-col items-center justify-center p-6 text-center text-slate-300 gap-3">
                   <AlertCircle className="w-8 h-8 text-amber-500/80" />
                   <div className="flex flex-col gap-1 max-w-sm">
-                    <span className="font-bold text-white text-sm">
+                    <span className="font-medium text-white text-sm">
                       {isGenerating ? 'Generating Redesign...' : 'AI Redesign Unavailable'}
                     </span>
                     <span className="text-xs text-slate-400">
@@ -244,12 +241,11 @@ export const BeforeAfterPreview: React.FC = () => {
             </div>
 
             {/* Labels */}
-            <div className="absolute top-4 left-4 bg-slate-900/85 backdrop-blur-md border border-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-mono font-bold tracking-wide shadow-md z-30">
+            <div className="absolute top-4 left-4 bg-slate-900/85 backdrop-blur-md border border-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-mono font-medium tracking-wide shadow-md z-30">
               ORIGINAL PHOTOGRAPH
             </div>
 
-            <div className="absolute top-4 right-4 bg-[#0d7a5f]/95 backdrop-blur-md border border-emerald-400/40 text-white px-3 py-1.5 rounded-lg text-xs font-mono font-bold tracking-wider uppercase shadow-md flex items-center gap-1.5 z-30">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
+            <div className="absolute top-4 right-4 bg-[#0d7a5f]/95 backdrop-blur-md border border-emerald-400/40 text-white px-3 py-1.5 rounded-lg text-xs font-mono font-medium tracking-wider uppercase shadow-md flex items-center gap-1.5 z-30">
               <span>ILLUSTRATIVE AI CONCEPT</span>
             </div>
 
@@ -286,13 +282,12 @@ export const BeforeAfterPreview: React.FC = () => {
               ) : (
                 <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center text-slate-400 gap-2">
                   <AlertCircle className="w-8 h-8 text-amber-500/80" />
-                  <span className="font-semibold text-xs text-slate-300">
+                  <span className="font-medium text-xs text-slate-300">
                     {isGenerating ? 'Generating Redesign...' : 'AI Redesign Unavailable'}
                   </span>
                 </div>
               )}
               <span className="absolute top-3 left-3 bg-[#0d7a5f]/90 text-white font-mono text-xs px-2.5 py-1 rounded-md border border-emerald-400/40 flex items-center gap-1.5">
-                <Sparkles className="w-3 h-3 text-emerald-300" />
                 ILLUSTRATIVE AI CONCEPT
               </span>
             </div>
@@ -302,17 +297,14 @@ export const BeforeAfterPreview: React.FC = () => {
         {/* Progress Overlay during Autonomous Generation */}
         {isGenerating && (
           <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center gap-4 text-white font-sans z-40 p-6 text-center">
-            <div className="relative">
-              <div className="w-14 h-14 border-4 border-emerald-500/20 border-t-emerald-400 rounded-full animate-spin" />
-              <Sparkles className="w-6 h-6 text-emerald-400 absolute inset-0 m-auto animate-pulse" />
-            </div>
+            <div className="rc-progress w-48" />
 
             <div className="flex flex-col items-center gap-1 max-w-md">
-              <span className="text-lg font-bold text-white font-sans tracking-wide">
+              <span className="text-lg font-semibold text-white font-sans tracking-wide">
                 {generationStage || 'GENERATING RESILIENT REDESIGN'}
               </span>
               <p className="text-xs text-slate-300">
-                Local SDXL inference running on RTX 3050 6GB. Grounding interventions into detected urban surfaces.
+                Planning the street from its measured dimensions, then rendering an illustrative image.
               </p>
             </div>
 
@@ -346,12 +338,12 @@ export const BeforeAfterPreview: React.FC = () => {
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-            <span className="text-xs font-bold text-slate-900 uppercase tracking-wider font-mono">
+            <span className="text-xs font-medium text-slate-900 uppercase tracking-wider font-mono">
               AI Design Strategy
             </span>
           </div>
-          <span className="text-[11px] font-mono text-emerald-700 font-semibold bg-emerald-50 px-2.5 py-0.5 rounded-md border border-emerald-200">
-            Autonomous AI Decisions
+          <span className="text-[11px] font-mono text-emerald-700 font-medium bg-emerald-50 px-2.5 py-0.5 rounded-md border border-emerald-200">
+            Planner decisions
           </span>
         </div>
 
@@ -381,8 +373,8 @@ export const BeforeAfterPreview: React.FC = () => {
                     )}
                   </div>
                   <div className="flex flex-col min-w-0">
-                    <span className="font-bold text-slate-900">{iv.title}</span>
-                    <span className="text-[10px] font-mono text-emerald-700 font-semibold">
+                    <span className="font-medium text-slate-900">{iv.title}</span>
+                    <span className="text-[10px] font-mono text-emerald-700 font-medium">
                       Target: {iv.targetRegion} · -{iv.coolingImpact.toFixed(1)}°C expected cooling
                     </span>
                   </div>
@@ -415,7 +407,7 @@ export const BeforeAfterPreview: React.FC = () => {
             </>
           ) : null}
         </span>
-        <span className="font-mono text-amber-700 font-semibold shrink-0 ml-3">ML ΔT Assessment</span>
+        <span className="font-mono text-amber-700 font-medium shrink-0 ml-3">ML ΔT Assessment</span>
       </div>
 
       {/* Footer Info */}
@@ -432,7 +424,7 @@ export const BeforeAfterPreview: React.FC = () => {
         </div>
 
         <span className="text-[11px] text-slate-400">
-          Autonomous Urban Planning · FLUX.1 Kontext concept image
+          Concept image: FLUX.1 Kontext
         </span>
       </div>
     </div>

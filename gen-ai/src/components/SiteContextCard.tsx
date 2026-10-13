@@ -17,7 +17,7 @@ export const SiteContextCard: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <span className="rc-card-header-label">SOURCE IMAGE</span>
-          <h3 className="text-lg font-bold text-slate-900 font-sans">Site context</h3>
+          <h3 className="text-lg font-semibold text-slate-900 font-sans">Site context</h3>
         </div>
         <HelpCircle className="w-4 h-4 text-slate-400 cursor-pointer hover:text-slate-600" />
       </div>
@@ -29,7 +29,7 @@ export const SiteContextCard: React.FC = () => {
           className="w-full h-full object-cover"
         />
 
-        <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-md border border-slate-200/80 px-3 py-1 rounded-lg text-xs font-semibold text-slate-800 flex items-center gap-1.5 shadow-sm">
+        <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-md border border-slate-200/80 px-3 py-1 rounded-lg text-xs font-medium text-slate-800 flex items-center gap-1.5 shadow-sm">
           <MapPin className="w-3.5 h-3.5 text-slate-600" />
           <span>North Loop / sample</span>
         </div>
@@ -55,7 +55,7 @@ export const SiteContextCard: React.FC = () => {
         onClick={() => fileInputRef.current?.click()}
         className="border-2 border-dashed border-slate-200 hover:border-emerald-500/60 bg-emerald-50/30 p-4 rounded-xl text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-1"
       >
-        <div className="flex items-center gap-2 text-emerald-700 font-semibold text-xs font-sans">
+        <div className="flex items-center gap-2 text-emerald-700 font-medium text-xs font-sans">
           <Upload className="w-4 h-4 text-emerald-600" />
           <span>Drop a new site image</span>
         </div>

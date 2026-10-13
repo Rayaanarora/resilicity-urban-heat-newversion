@@ -200,7 +200,7 @@ export const StreetCrossSection: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <span className="rc-card-header-label">STREET CROSS-SECTION</span>
-          <h3 className="text-xl font-bold text-slate-900 font-sans">Dimensioned section (proposed)</h3>
+          <h3 className="text-xl font-semibold text-slate-900 font-sans">Dimensioned section (proposed)</h3>
         </div>
         <span className="flex items-center gap-1.5 text-[11px] font-mono text-slate-600 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg">
           <Ruler className="w-3.5 h-3.5" />

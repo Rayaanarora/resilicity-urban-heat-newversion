@@ -1,15 +1,15 @@
 import React from 'react';
-import { ShieldAlert, Cpu, Sparkles, Flame, FileCode2, LineChart, Target } from 'lucide-react';
+import { ShieldAlert, Layers, Image, Thermometer, FileCode2, LineChart, Target } from 'lucide-react';
 
 export const MethodNoteView: React.FC = () => {
   return (
     <div className="flex flex-col gap-6 max-w-5xl mx-auto font-sans animate-fade-in">
       {/* Header */}
       <div className="flex flex-col gap-1 border-b border-slate-200 pb-5">
-        <div className="text-[11px] font-mono font-semibold tracking-widest text-[#0d7a5f] uppercase">
+        <div className="text-[11px] font-mono font-medium tracking-widest text-[#0d7a5f] uppercase">
           URBAN HEAT LAB · TECHNICAL METHODOLOGY NOTE
         </div>
-        <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">
+        <h1 className="text-3xl font-semibold text-slate-900 tracking-normal">
           ResiliCity Architecture & Machine Learning Calibration
         </h1>
         <p className="text-sm text-slate-600 leading-relaxed max-w-3xl mt-1">
@@ -19,8 +19,8 @@ export const MethodNoteView: React.FC = () => {
 
       {/* Section 1: Multi-Stage Pipeline */}
       <div className="rc-card p-6 flex flex-col gap-4">
-        <div className="flex items-center gap-2 text-slate-900 font-bold font-sans text-base">
-          <Cpu className="w-5 h-5 text-[#0d7a5f]" />
+        <div className="flex items-center gap-2 text-slate-900 font-medium font-sans text-base">
+          <Layers className="w-5 h-5 text-[#0d7a5f]" />
           <span>1. Multi-Stage Pipeline Architecture</span>
         </div>
         <p className="text-xs text-slate-600 leading-relaxed">
@@ -29,26 +29,26 @@ export const MethodNoteView: React.FC = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 font-mono text-xs my-2">
           <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl flex flex-col gap-1">
-            <span className="text-[10px] text-teal-700 font-bold uppercase">Stage 1</span>
-            <span className="font-bold text-slate-900">SegFormer (pretrained)</span>
+            <span className="text-[10px] text-teal-700 font-medium uppercase">Stage 1</span>
+            <span className="font-medium text-slate-900">SegFormer (pretrained)</span>
             <span className="text-[11px] text-slate-500">Segments roofs, roads, pavement, walls, and vegetation. Local fine-tuning is planned.</span>
           </div>
 
           <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl flex flex-col gap-1">
-            <span className="text-[10px] text-teal-700 font-bold uppercase">Stage 2</span>
-            <span className="font-bold text-slate-900">Landsat LST Regressor</span>
+            <span className="text-[10px] text-teal-700 font-medium uppercase">Stage 2</span>
+            <span className="font-medium text-slate-900">Landsat LST Regressor</span>
             <span className="text-[11px] text-slate-500">Predicts land surface temperature (°C) from land cover, trained on Earth Engine data. Weak fit so far.</span>
           </div>
 
           <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl flex flex-col gap-1">
-            <span className="text-[10px] text-teal-700 font-bold uppercase">Stage 3</span>
-            <span className="font-bold text-slate-900">VLM JSON Engine</span>
+            <span className="text-[10px] text-teal-700 font-medium uppercase">Stage 3</span>
+            <span className="font-medium text-slate-900">VLM JSON Engine</span>
             <span className="text-[11px] text-slate-500">Claude/GPT-4o output ranked interventions in strict JSON.</span>
           </div>
 
           <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl flex flex-col gap-1">
-            <span className="text-[10px] text-teal-700 font-bold uppercase">Stage 4</span>
-            <span className="font-bold text-slate-900">SDXL + ControlNet</span>
+            <span className="text-[10px] text-teal-700 font-medium uppercase">Stage 4</span>
+            <span className="font-medium text-slate-900">SDXL + ControlNet</span>
             <span className="text-[11px] text-slate-500">Applies inpainting strictly within target mask boundaries.</span>
           </div>
         </div>
@@ -57,11 +57,11 @@ export const MethodNoteView: React.FC = () => {
       {/* Section 2: Where ML Actually Stands (Calibrated ML Models) */}
       <div className="rc-card p-6 flex flex-col gap-5 border-2 border-emerald-500/40">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-slate-900 font-bold font-sans text-base">
+          <div className="flex items-center gap-2 text-slate-900 font-medium font-sans text-base">
             <LineChart className="w-5 h-5 text-emerald-600" />
             <span>2. Where ML Stands: Data Calibration & Model Training</span>
           </div>
-          <span className="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded uppercase">
+          <span className="text-[10px] font-mono font-medium bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded uppercase">
             EMPIRICALLY CALIBRATED
           </span>
         </div>
@@ -75,8 +75,8 @@ export const MethodNoteView: React.FC = () => {
           {/* Addition 1: Heat Regression */}
           <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl flex flex-col justify-between gap-3">
             <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono font-bold text-emerald-700 uppercase">PRIORITY 1 · TRAINED (WEAK FIT)</span>
-              <span className="font-bold text-slate-900 text-sm">Landsat LST Satellite Regression</span>
+              <span className="text-[10px] font-mono font-medium text-emerald-700 uppercase">PRIORITY 1 · TRAINED (WEAK FIT)</span>
+              <span className="font-medium text-slate-900 text-sm">Landsat LST Satellite Regression</span>
               <p className="text-[11px] text-slate-600 leading-tight">
                 Gradient Boosting Regressor predicting Land Surface Temp (LST) from ESA WorldCover land-cover fractions at 3,117 sample points around Chengalpattu & Chennai.
               </p>
@@ -90,8 +90,8 @@ export const MethodNoteView: React.FC = () => {
           {/* Addition 2: Fine-Tuned SegFormer */}
           <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl flex flex-col justify-between gap-3">
             <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono font-bold text-emerald-700 uppercase">PRIORITY 2 · PLANNED</span>
-              <span className="font-bold text-slate-900 text-sm">Local Street Scene SegFormer</span>
+              <span className="text-[10px] font-mono font-medium text-emerald-700 uppercase">PRIORITY 2 · PLANNED</span>
+              <span className="font-medium text-slate-900 text-sm">Local Street Scene SegFormer</span>
               <p className="text-[11px] text-slate-600 leading-tight">
                 Plan: fine-tune SegFormer-B0 on 80-150 locally labelled street photos to reduce Western-city dataset bias. Not trained yet.
               </p>
@@ -105,8 +105,8 @@ export const MethodNoteView: React.FC = () => {
           {/* Addition 3: Ward Heat Map */}
           <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl flex flex-col justify-between gap-3">
             <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono font-bold text-emerald-700 uppercase">PRIORITY 3 · PLANNED</span>
-              <span className="font-bold text-slate-900 text-sm">Neighborhood Heat Priority Map</span>
+              <span className="text-[10px] font-mono font-medium text-emerald-700 uppercase">PRIORITY 3 · PLANNED</span>
+              <span className="font-medium text-slate-900 text-sm">Neighborhood Heat Priority Map</span>
               <p className="text-[11px] text-slate-600 leading-tight">
                 Idea: a ward-level model over satellite tiles to rank where interventions matter most. Not built yet.
               </p>
@@ -122,7 +122,7 @@ export const MethodNoteView: React.FC = () => {
         <div className="bg-emerald-50/70 border border-emerald-200 p-3.5 rounded-xl text-xs text-emerald-950 flex items-start gap-2.5">
           <Target className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
           <div className="flex flex-col gap-0.5">
-            <span className="font-bold font-mono text-[11px] uppercase">Spatial Cross-Validation Rigor</span>
+            <span className="font-medium font-mono text-[11px] uppercase">Spatial Cross-Validation Rigor</span>
             <span className="text-[11px] leading-tight">
               To prevent spatial autocorrelation data leakage, validation test points are drawn from completely distinct geographical clusters than training points (samples are grouped into ~5 km grid blocks, and each block is held out in turn).
             </span>
@@ -132,8 +132,8 @@ export const MethodNoteView: React.FC = () => {
 
       {/* Section 3: Learned Regression Coefficients vs Static Lookup */}
       <div className="rc-card p-6 flex flex-col gap-4">
-        <div className="flex items-center gap-2 text-slate-900 font-bold font-sans text-base">
-          <Flame className="w-5 h-5 text-orange-600" />
+        <div className="flex items-center gap-2 text-slate-900 font-medium font-sans text-base">
+          <Thermometer className="w-5 h-5 text-orange-600" />
           <span>3. How the regression is used</span>
         </div>
         
@@ -145,7 +145,7 @@ export const MethodNoteView: React.FC = () => {
       {/* Section 4: VLM & ControlNet Architecture */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="rc-card p-6 flex flex-col gap-3">
-          <div className="flex items-center gap-2 text-slate-900 font-bold font-sans text-base">
+          <div className="flex items-center gap-2 text-slate-900 font-medium font-sans text-base">
             <FileCode2 className="w-5 h-5 text-purple-600" />
             <span>4. Structured VLM JSON Schema</span>
           </div>
@@ -168,15 +168,15 @@ export const MethodNoteView: React.FC = () => {
         </div>
 
         <div className="rc-card p-6 flex flex-col gap-3">
-          <div className="flex items-center gap-2 text-slate-900 font-bold font-sans text-base">
-            <Sparkles className="w-5 h-5 text-teal-600" />
+          <div className="flex items-center gap-2 text-slate-900 font-medium font-sans text-base">
+            <Image className="w-5 h-5 text-teal-600" />
             <span>5. ControlNet Inpainting & Caching</span>
           </div>
           <p className="text-xs text-slate-600 leading-relaxed">
             Standard text-to-image models redesign entire buildings. ResiliCity uses ControlNet depth maps to preserve perspective and geometry while applying masked inpainting.
           </p>
           <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl text-xs text-slate-700 flex flex-col gap-1 font-mono">
-            <span className="font-bold text-slate-900">State Caching Rule:</span>
+            <span className="font-medium text-slate-900">State Caching Rule:</span>
             <span className="text-[11px] text-slate-500">
               \`CacheKey = activeInterventions.sort().join('|')\`
             </span>
@@ -191,7 +191,7 @@ export const MethodNoteView: React.FC = () => {
       <div className="bg-orange-50 border border-orange-200 p-5 rounded-2xl flex items-start gap-3 text-xs text-orange-900 leading-relaxed mb-6">
         <ShieldAlert className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
         <div className="flex flex-col gap-2">
-          <span className="font-bold uppercase font-mono tracking-wider text-[11px]">
+          <span className="font-medium uppercase font-mono tracking-wider text-[11px]">
             Honest Scientific & Report Caveats
           </span>
           <ul className="list-disc pl-4 space-y-1 text-[11px] leading-relaxed">

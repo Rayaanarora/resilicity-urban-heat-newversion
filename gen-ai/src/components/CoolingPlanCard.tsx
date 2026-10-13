@@ -1,12 +1,9 @@
 import React from 'react';
 import { useResiliCityStore } from '../store/useResiliCityStore';
 import {
-  Check,
   CloudSun,
   Trees,
   Layers,
-  Sparkles,
-  Zap,
   TrendingDown,
   ShieldCheck,
   Percent,
@@ -32,7 +29,7 @@ export const CoolingPlanCard: React.FC = () => {
       case 'permeable_pave':
         return <Layers className="w-4 h-4 text-sky-600" />;
       default:
-        return <Zap className="w-4 h-4 text-teal-600" />;
+        return <Layers className="w-4 h-4 text-teal-600" />;
     }
   };
 
@@ -64,12 +61,11 @@ export const CoolingPlanCard: React.FC = () => {
         <div className="flex items-center justify-between">
           <div>
             <span className="rc-card-header-label">SPATIAL RESILIENCE STRATEGY</span>
-            <h3 className="text-xl font-bold text-slate-900 font-sans">Autonomous Interventions</h3>
+            <h3 className="text-xl font-semibold text-slate-900 font-sans">Selected interventions</h3>
           </div>
 
-          <div className="flex items-center gap-1.5 text-xs font-mono font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
-            <Check className="w-3.5 h-3.5 text-emerald-600" />
-            <span>AI Spatial Reasoning</span>
+          <div className="flex items-center gap-1.5 text-xs font-mono font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
+            <span>Rule-based planner</span>
           </div>
         </div>
 
@@ -105,7 +101,7 @@ export const CoolingPlanCard: React.FC = () => {
 
                   <div className="flex flex-col min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-slate-900 font-sans truncate">
+                      <span className="text-sm font-medium text-slate-900 font-sans truncate">
                         {item.title}
                       </span>
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 uppercase border border-slate-200">
@@ -119,7 +115,7 @@ export const CoolingPlanCard: React.FC = () => {
                   </div>
                 </div>
 
-                <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md border border-emerald-200 shrink-0">
+                <span className="text-[10px] font-mono font-medium text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md border border-emerald-200 shrink-0">
                   Priority #{item.priority}
                 </span>
               </div>
@@ -145,7 +141,7 @@ export const CoolingPlanCard: React.FC = () => {
                     <ShieldCheck className="w-3 h-3 text-emerald-600" />
                     Feasibility: {feasibilityPct}%
                   </span>
-                  <span className="flex items-center gap-1 text-teal-700 font-bold">
+                  <span className="flex items-center gap-1 text-teal-700 font-medium">
                     <TrendingDown className="w-3 h-3 text-teal-600" />
                     -{item.coolingImpact.toFixed(1)}°C est. cooling
                   </span>
@@ -165,16 +161,15 @@ export const CoolingPlanCard: React.FC = () => {
             type="button"
             disabled={isGenerating}
             onClick={() => void generateResilientDesign('fast')}
-            className="flex-1 py-3 px-4 bg-[#0d7a5f] hover:bg-[#0b6b53] disabled:opacity-50 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition-all shadow-md font-sans cursor-pointer"
+            className="flex-1 py-3 px-4 bg-[#0d7a5f] hover:bg-[#0b6b53] disabled:opacity-50 text-white font-medium rounded-xl text-sm flex items-center justify-center gap-2 transition-all shadow-md font-sans cursor-pointer"
           >
-            <Sparkles className="w-4 h-4 text-emerald-300" />
-            <span>{isGenerating ? 'Generating Resilient Redesign...' : 'RE-RUN AUTONOMOUS REDESIGN'}</span>
+            <span>{isGenerating ? 'Generating redesign…' : 'Re-run redesign'}</span>
           </button>
         </div>
 
         <div className="flex items-center justify-between text-[11px] text-slate-500 font-sans px-1">
           <span>Interventions autonomously selected from SegFormer surface perception.</span>
-          <span className="font-mono text-emerald-700 font-semibold">Gated by street dimensions</span>
+          <span className="font-mono text-emerald-700 font-medium">Gated by street dimensions</span>
         </div>
       </div>
     </div>

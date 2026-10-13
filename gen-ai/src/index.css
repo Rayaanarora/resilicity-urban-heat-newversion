@@ -1,12 +1,27 @@
 @import "tailwindcss";
 
+/* Design tokens: Arial throughout, square corners, ResiliCity green. */
+@theme {
+  --font-sans: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --font-mono: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --color-brand: #0d7a5f;
+  --color-brand-dark: #0a6550;
+  --color-brand-tint: #e8f3ef;
+}
+
 @layer base {
   :root {
     color-scheme: light;
   }
 
+  /* Square corners everywhere: no rounded boxes, pills or bubbles. */
+  *, *::before, *::after {
+    border-radius: 0 !important;
+  }
+
   body {
     @apply bg-[#f6f8fa] text-slate-800 font-sans antialiased overflow-x-hidden selection:bg-teal-500/20 selection:text-teal-900;
+    font-variant-numeric: tabular-nums;
     margin: 0;
     padding: 0;
     min-height: 100dvh;
@@ -31,40 +46,138 @@
 
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
-  border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
 
-/* Screenshot exact card styles */
+/* Cards: flat, square, quiet border that warms to green on hover */
 .rc-card {
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 1rem;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.02), 0 1px 2px -1px rgba(0, 0, 0, 0.02);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+}
+
+.rc-card:hover {
+  border-color: #b7d9cc;
+  box-shadow: 0 6px 18px -8px rgba(13, 122, 95, 0.18);
 }
 
 .rc-card-header-label {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
   font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
+  font-weight: 400;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: #64748b;
 }
 
-/* Primary Teal Action Button */
+/* Primary green action button */
 .rc-btn-primary {
   background-color: #0d7a5f;
   color: #ffffff;
-  font-weight: 600;
-  transition: all 0.15s ease-in-out;
+  font-weight: 500;
+  transition: background-color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
 }
 
 .rc-btn-primary:hover {
-  background-color: #0b6b53;
+  background-color: #0a6550;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px -4px rgba(13, 122, 95, 0.45);
+}
+
+.rc-btn-primary:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+/* All buttons get a quick press response */
+button {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+
+button:not(:disabled):active {
+  transform: scale(0.98);
+}
+
+/* Motion ---------------------------------------------------------------- */
+@keyframes rc-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes rc-grow {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+@keyframes rc-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes rc-sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+
+/* Cards rise into view as you scroll (falls back to a one-off rise on load). */
+.rc-card {
+  animation: rc-rise 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@supports (animation-timeline: view()) {
+  .rc-card {
+    animation: rc-rise linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 35%;
+  }
+}
+
+/* Bars fill from the left when they appear */
+.rc-bar {
+  transform-origin: left center;
+  animation: rc-grow 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* Content swapped in after an analysis fades in */
+.rc-fade-in {
+  animation: rc-fade 0.45s ease both;
+}
+
+/* Thin indeterminate progress line */
+.rc-progress {
+  position: relative;
+  overflow: hidden;
+  height: 2px;
+  background: #d7ebe3;
+}
+
+.rc-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #0d7a5f;
+  animation: rc-sweep 1.2s ease-in-out infinite;
+}
+
+/* Table rows highlight on hover */
+.rc-row {
+  transition: background-color 0.15s ease;
+}
+
+.rc-row:hover {
+  background-color: #f3f8f6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Pulse animation for Colab Proxy */

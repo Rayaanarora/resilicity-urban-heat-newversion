@@ -1,6 +1,6 @@
 import React from 'react';
 import { useResiliCityStore } from '../store/useResiliCityStore';
-import { Play, Download, Calendar, MapPin, Sparkles, Layers } from 'lucide-react';
+import { Play, Download, Calendar, MapPin, Layers } from 'lucide-react';
 
 interface SavedRun {
   id: string;
@@ -61,10 +61,10 @@ export const SavedRunsView: React.FC<SavedRunsViewProps> = ({ onExportClick }) =
     <div className="flex flex-col gap-6 animate-fade-in">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="text-[11px] font-mono font-semibold tracking-widest text-slate-400 uppercase mb-1">
-            WORKSPACE → SAVED INSPECTION RUNS
+          <div className="text-[11px] font-mono font-medium tracking-widest text-slate-400 uppercase mb-1">
+            WORKSPACE / SAVED INSPECTION RUNS
           </div>
-          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">
+          <h1 className="text-3xl font-semibold text-slate-900 tracking-normal">
             Saved inspection runs
           </h1>
           <p className="text-sm text-slate-500 mt-1">
@@ -89,10 +89,10 @@ export const SavedRunsView: React.FC<SavedRunsViewProps> = ({ onExportClick }) =
                   alt={run.location}
                   className="w-full h-full object-cover"
                 />
-                <div className="absolute top-3 left-3 bg-slate-900/85 backdrop-blur text-white px-2.5 py-1 rounded-md text-[11px] font-mono font-bold">
+                <div className="absolute top-3 left-3 bg-slate-900/85 backdrop-blur text-white px-2.5 py-1 rounded-md text-[11px] font-mono font-medium">
                   {run.runCode}
                 </div>
-                <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur text-slate-800 px-2.5 py-0.5 rounded-md text-[11px] font-semibold flex items-center gap-1">
+                <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur text-slate-800 px-2.5 py-0.5 rounded-md text-[11px] font-medium flex items-center gap-1">
                   <MapPin className="w-3 h-3 text-slate-500" />
                   <span>{run.location}</span>
                 </div>
@@ -101,32 +101,31 @@ export const SavedRunsView: React.FC<SavedRunsViewProps> = ({ onExportClick }) =
               <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-100">
                 <div className="flex flex-col">
                   <span className="text-[10px] font-mono uppercase text-slate-400">Baseline</span>
-                  <span className="text-lg font-black text-amber-700 font-sans">{run.baseScore.toFixed(1)}</span>
+                  <span className="text-lg font-semibold text-amber-700 font-sans">{run.baseScore.toFixed(1)}</span>
                 </div>
 
-                <div className="text-slate-300 font-mono text-sm">→</div>
+                <div className="h-px w-8 bg-slate-300" aria-hidden="true" />
 
                 <div className="flex flex-col items-center">
                   <span className="text-[10px] font-mono uppercase text-slate-400">Projected</span>
-                  <span className="text-lg font-black text-teal-700 font-sans">{run.projectedScore.toFixed(1)}</span>
+                  <span className="text-lg font-semibold text-teal-700 font-sans">{run.projectedScore.toFixed(1)}</span>
                 </div>
 
                 <div className="flex flex-col items-end">
                   <span className="text-[10px] font-mono uppercase text-slate-400">Delta</span>
-                  <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded font-mono">
+                  <span className="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded font-mono">
                     -{delta} PTS
                   </span>
                 </div>
               </div>
 
               <div className="flex flex-col gap-1.5 text-xs font-sans">
-                <span className="text-[11px] font-mono uppercase text-slate-400 font-semibold">
-                  Autonomous Interventions ({run.activeInterventionsCount})
+                <span className="text-[11px] font-mono uppercase text-slate-400 font-medium">
+                  Interventions ({run.activeInterventionsCount})
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {run.interventions.map((intName, idx) => (
                     <span key={idx} className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[11px] font-medium flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-emerald-600" />
                       {intName}
                     </span>
                   ))}
@@ -142,7 +141,7 @@ export const SavedRunsView: React.FC<SavedRunsViewProps> = ({ onExportClick }) =
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => loadSampleScene('north-loop-sample')}
-                    className="px-3 py-1.5 bg-[#0d7a5f] hover:bg-[#0b6b53] text-white text-xs font-semibold rounded-lg flex items-center gap-1 transition-colors shadow-sm font-mono"
+                    className="px-3 py-1.5 bg-[#0d7a5f] hover:bg-[#0b6b53] text-white text-xs font-medium rounded-lg flex items-center gap-1 transition-colors shadow-sm font-mono"
                   >
                     <Play className="w-3 h-3 fill-current" />
                     Load

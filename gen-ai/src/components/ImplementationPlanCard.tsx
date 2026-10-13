@@ -37,9 +37,9 @@ export const ImplementationPlanCard: React.FC = () => {
           <span className="rc-card-header-label">
             IMPLEMENTATION PLAN{impl ? ` · PER ${impl.street_length_m.toFixed(0)} M OF STREET` : ''}
           </span>
-          <h3 className="text-xl font-bold text-slate-900 font-sans">Bill of quantities &amp; phasing</h3>
+          <h3 className="text-xl font-semibold text-slate-900 font-sans">Bill of quantities &amp; phasing</h3>
         </div>
-        <span className="text-[11px] font-mono font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
+        <span className="text-[11px] font-mono font-medium text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
           Indicative rates · not for tender
         </span>
       </div>
@@ -47,7 +47,7 @@ export const ImplementationPlanCard: React.FC = () => {
       {/* Site inputs */}
       <div className="flex flex-wrap items-end gap-3 text-xs font-sans">
         <label className="flex flex-col gap-1">
-          <span className="text-slate-600 font-semibold">Carriageway width (m)</span>
+          <span className="text-slate-600 font-medium">Carriageway width (m)</span>
           <input
             type="number" min={3} step={0.5} placeholder="7.0 (assumed)"
             defaultValue={roadWidthM ?? ''}
@@ -56,7 +56,7 @@ export const ImplementationPlanCard: React.FC = () => {
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-slate-600 font-semibold">Budget cap (₹ lakh)</span>
+          <span className="text-slate-600 font-medium">Budget cap (₹ lakh)</span>
           <input
             type="number" min={0} step={0.5} placeholder="No cap"
             defaultValue={budgetLakh ?? ''}
@@ -83,11 +83,11 @@ export const ImplementationPlanCard: React.FC = () => {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
               <div className="text-[10px] font-mono uppercase text-slate-500">Indicative cost</div>
-              <div className="text-sm font-bold text-slate-900">{inrRange(impl.total_cost_inr_low, impl.total_cost_inr_high)}</div>
+              <div className="text-sm font-medium text-slate-900">{inrRange(impl.total_cost_inr_low, impl.total_cost_inr_high)}</div>
             </div>
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
               <div className="text-[10px] font-mono uppercase text-slate-500">Est. local cooling</div>
-              <div className="text-sm font-bold text-teal-700">
+              <div className="text-sm font-medium text-teal-700">
                 {impl.total_cooling_c.toFixed(1)} °C
                 {thermalImpact?.coolingRangeC && (
                   <span className="font-normal text-slate-500">
@@ -98,11 +98,11 @@ export const ImplementationPlanCard: React.FC = () => {
             </div>
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
               <div className="text-[10px] font-mono uppercase text-slate-500">Cooling per lakh</div>
-              <div className="text-sm font-bold text-slate-900">{impl.cooling_per_lakh_c.toFixed(2)} °C</div>
+              <div className="text-sm font-medium text-slate-900">{impl.cooling_per_lakh_c.toFixed(2)} °C</div>
             </div>
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
               <div className="text-[10px] font-mono uppercase text-slate-500">Budget</div>
-              <div className={`text-sm font-bold ${impl.within_budget === false ? 'text-red-600' : 'text-slate-900'}`}>
+              <div className={`text-sm font-medium ${impl.within_budget === false ? 'text-red-600' : 'text-slate-900'}`}>
                 {impl.budget_lakh ? `${impl.within_budget ? 'Within' : 'Over'} ₹${impl.budget_lakh} L cap` : 'No cap set'}
               </div>
             </div>
@@ -125,10 +125,10 @@ export const ImplementationPlanCard: React.FC = () => {
                 {impl.line_items.map((li) => (
                   <tr key={`${li.type}-${li.target_zone}`} className="border-b border-slate-100 align-top">
                     <td className="py-2 pr-3">
-                      <div className="font-semibold text-slate-900">{li.title}</div>
+                      <div className="font-medium text-slate-900">{li.title}</div>
                       <div className="text-[11px] text-slate-500">{li.basis}</div>
                       {li.conditions.map((c) => (
-                        <div key={c} className="text-[11px] text-amber-800">⚠ {c}</div>
+                        <div key={c} className="text-[11px] text-amber-800">Condition: {c}</div>
                       ))}
                     </td>
                     <td className="py-2 pr-3 text-slate-600">{side(li.target_zone)}</td>
@@ -155,7 +155,7 @@ export const ImplementationPlanCard: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {impl.phases.map((p) => (
               <div key={p.phase} className="border border-slate-200 rounded-xl p-3 flex flex-col gap-1.5">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-slate-800">
                   <CalendarClock className="w-3.5 h-3.5 text-teal-600" />
                   {p.label}
                 </div>
@@ -172,7 +172,7 @@ export const ImplementationPlanCard: React.FC = () => {
           {/* Prerequisites */}
           {impl.prerequisites.length > 0 && (
             <details className="border border-slate-200 rounded-xl p-3 text-xs">
-              <summary className="cursor-pointer font-semibold text-slate-800 flex items-center gap-1.5">
+              <summary className="cursor-pointer font-medium text-slate-800 flex items-center gap-1.5">
                 <FileCheck2 className="w-3.5 h-3.5 text-teal-600" />
                 Prerequisites &amp; permits ({impl.prerequisites.length})
               </summary>
@@ -189,7 +189,7 @@ export const ImplementationPlanCard: React.FC = () => {
       {/* Rejected with reasons */}
       {rejected.length > 0 && (
         <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-800">
             <Ban className="w-3.5 h-3.5 text-rose-600" />
             Considered and rejected ({rejected.length})
           </div>
@@ -197,7 +197,7 @@ export const ImplementationPlanCard: React.FC = () => {
             {rejected.map((r, i) => (
               <li key={`${r.type}-${r.target_zone}-${r.rule}-${i}`}
                   className="text-[11px] font-sans bg-rose-50/60 border border-rose-100 rounded-lg px-3 py-2 text-slate-700">
-                <span className="font-semibold text-rose-800">
+                <span className="font-medium text-rose-800">
                   {r.type.replace(/_/g, ' ')}
                   {r.target_zone ? ` · ${side(r.target_zone)}` : ''}:
                 </span>{' '}
