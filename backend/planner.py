@@ -34,7 +34,7 @@ from image_generation.schemas import (
     SpatialDesignPlan,
     SpatialInterventionSpec,
 )
-from buildable import estimate_street_metrics
+from buildable import estimate_street_metrics, get_spec
 from scene_understanding import SceneUnderstanding, analyze_scene
 
 logger = logging.getLogger("resilicity.planner")
@@ -44,74 +44,115 @@ PLANNER_MODEL = os.environ.get("PLANNER_MODEL", "autonomous_spatial_planner")
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MINIMUM_IMPACT_THRESHOLD = 0.15
 
-# Catalog of resilient interventions with baseline engineering and cooling characteristics
-CATALOG: Dict[str, Dict[str, Any]] = {
+# Descriptive text per intervention. Engineering specs (dimensions, spacing, clearances, costs,
+# permits, cooling) live in buildable/config.py and are reached through buildable.get_spec().
+_TREE_SPACING = get_spec("tree_canopy").spacing_m
+_PIT = get_spec("tree_canopy").dimensions["pit_m"]
+_AWNING_DEPTH = get_spec("facade_awning").dimensions["depth_m"]
+
+CATALOG_TEXT: Dict[str, Dict[str, str]] = {
     "tree_canopy": {
-        "title": "Pedestrian Tree Canopy Corridor",
         "target": "pavement",
-        "cost": ("med", "Medium cost"),
-        "base_cooling": 1.2,
-        "default_coverage": 0.35,
         "heat_mechanism": "shading_and_evapotranspiration",
-        "placement": "Planted along sidewalk margins and pedestrian curb lines at 8-10m perspective intervals",
-        "visual_design": "Mature broad-canopy shade trees with textured trunks rooted in sidewalk planting pits, casting natural cooling shadows",
-        "reason": "Intercepts intense direct solar radiation, cools ambient air via evapotranspiration, and creates continuous pedestrian shade corridors.",
+        "placement": f"Young street trees in {_PIT:.1f} m tree pits at the kerb edge, about {_TREE_SPACING:.0f} m apart, keeping the clear walkway",
+        "visual_design": f"Nursery-stock street trees about 4 m tall in {_PIT:.1f} m pits with grates and guards",
+        "reason": "Intercepts direct sun on the walkway and cools air by evapotranspiration once the canopy establishes.",
+    },
+    "parking_lane_tree": {
+        "target": "road",
+        "heat_mechanism": "shading_and_evapotranspiration",
+        "placement": "Kerb build-outs in the parking lane where the footpath is too narrow for tree pits",
+        "visual_design": "Young street trees in raised kerb build-outs with painted kerbs and drainage gaps",
+        "reason": "Adds street trees without consuming scarce footpath width, by reallocating part of the parking lane.",
     },
     "cool_pavement": {
-        "title": "High-Albedo Solar-Reflective Roadway",
         "target": "road",
-        "cost": ("med", "Medium cost"),
-        "base_cooling": 0.8,
-        "default_coverage": 0.65,
         "heat_mechanism": "surface_albedo_reflection",
-        "placement": "Applied across asphalt road lanes while strictly preserving crosswalks, lane markings, and curbs",
-        "visual_design": "Light-gray solar-reflective architectural coating (albedo ~0.40) preserving all painted traffic markings and lane lines",
-        "reason": "Prevents dark asphalt from absorbing and re-radiating thermal energy, dropping daytime surface temperatures by up to 12°C.",
+        "placement": "Applied across carriageway lanes, keeping crosswalks, lane markings and kerbs",
+        "visual_design": "Light-gray reflective road coating with all traffic markings repainted",
+        "reason": "Lowers road surface temperature and heat storage; used only where reflected sun will not load pedestrians.",
     },
     "permeable_pave": {
-        "title": "Permeable Interlocking Sidewalk Pavers",
         "target": "pavement",
-        "cost": ("med", "Medium cost"),
-        "base_cooling": 0.6,
-        "default_coverage": 0.50,
         "heat_mechanism": "permeability_and_infiltration",
-        "placement": "Installed across pedestrian walkways and sidewalk corridors",
-        "visual_design": "Modular interlocking light-tone concrete pavers with narrow gravel drainage joints",
-        "reason": "Facilitates sub-surface rainwater infiltration, promotes evaporative cooling, and improves pedestrian walking comfort.",
+        "placement": "Across the footpath, outside tree pits and utility covers",
+        "visual_design": "Light-tone interlocking permeable concrete pavers with open joints",
+        "reason": "Lets rainwater infiltrate and evaporate from the footpath and feeds street-tree roots.",
     },
     "shade_structure": {
-        "title": "Architectural Tensile Shade Canopy",
         "target": "pavement",
-        "cost": ("low", "Low cost"),
-        "base_cooling": 0.7,
-        "default_coverage": 0.35,
         "heat_mechanism": "solar_interception_shading",
-        "placement": "Suspended over sidewalk gathering zones and pedestrian transit waiting corridors anchored by slender steel posts",
-        "visual_design": "Modern geometric light-toned tensile fabric sailcloth anchored to slender structural steel columns",
-        "reason": "Provides immediate high-density solar obstruction where narrow sidewalk width or utilities limit deep tree root growth.",
+        "placement": "Over waiting and gathering spots on the footpath, posts at the kerb edge",
+        "visual_design": "Light fabric shade sails on slender steel posts",
+        "reason": "Immediate shade where tree pits will not fit or until trees establish.",
     },
     "cool_roof": {
-        "title": "High-Albedo Cool Roof Coating",
         "target": "roof",
-        "cost": ("low", "Low cost"),
-        "base_cooling": 0.9,
-        "default_coverage": 0.75,
         "heat_mechanism": "envelope_albedo_reflection",
-        "placement": "Coated across flat building rooftops exposed to overhead sun",
-        "visual_design": "Clean off-white solar-reflective elastomeric roof membrane coating (albedo ~0.80)",
-        "reason": "Reflects incoming solar radiation, reducing rooftop surface temperatures and internal building cooling loads.",
+        "placement": "Flat roofs visible from the street",
+        "visual_design": "White reflective elastomeric roof coating",
+        "reason": "Reflects sun off the roof, lowering roof surface temperature and indoor cooling load.",
     },
     "green_roof": {
-        "title": "Extensive Vegetative Green Roof",
         "target": "roof",
-        "cost": ("high", "High cost"),
-        "base_cooling": 1.4,
-        "default_coverage": 0.60,
         "heat_mechanism": "biological_evapotranspiration",
-        "placement": "Installed on structurally sound flat rooftop surfaces",
-        "visual_design": "Lush sedum succulent matting with organic flowering groundcover and gravel drainage borders",
-        "reason": "Maximizes natural biological evapotranspiration, provides thermal insulation, and captures urban stormwater.",
+        "placement": "Structurally assessed flat roofs",
+        "visual_design": "Extensive sedum roof with gravel borders",
+        "reason": "Evapotranspiration and insulation on the roof, plus stormwater retention.",
     },
+    "facade_awning": {
+        "target": "wall",
+        "heat_mechanism": "solar_interception_shading",
+        "placement": f"Cantilevered about {_AWNING_DEPTH:.1f} m over shopfronts, above head height, never past the kerb",
+        "visual_design": "Simple metal or fabric shopfront awnings in light colours",
+        "reason": "Shades the frontage zone where people walk and wait, using the building as the structure.",
+    },
+    "bus_shelter": {
+        "target": "pavement",
+        "heat_mechanism": "solar_interception_shading",
+        "placement": "At an existing bus stop, leaving the clear walkway behind the shelter",
+        "visual_design": "Open bus shelter with a white reflective roof",
+        "reason": "Shades people who wait in the sun; only proposed where a bus stop exists.",
+    },
+    "solar_canopy": {
+        "target": "pavement",
+        "heat_mechanism": "solar_interception_shading",
+        "placement": "Pergola over a wide, sunny walkway with columns at the kerb edge",
+        "visual_design": "Slim steel pergola carrying solar PV panels",
+        "reason": "Shades the walkway and generates electricity on streets too open for street trees to shade quickly.",
+    },
+    "kerb_bioswale": {
+        "target": "road",
+        "heat_mechanism": "permeability_and_infiltration",
+        "placement": "Kerb extensions between parking bays, fed by kerb inlets",
+        "visual_design": "Planted rain gardens with low grasses and kerb inlets",
+        "reason": "Captures street runoff, keeps soil moist for evaporative cooling and reduces local flooding.",
+    },
+    "cool_wall": {
+        "target": "wall",
+        "heat_mechanism": "envelope_albedo_reflection",
+        "placement": "Sun-facing walls above shopfront level",
+        "visual_design": "Light matte reflective wall paint",
+        "reason": "Reduces wall heat gain and night-time re-radiation into the street without facade vegetation.",
+    },
+    "misting_system": {
+        "target": "pavement",
+        "heat_mechanism": "evaporative_cooling",
+        "placement": "Along waiting areas under shade",
+        "visual_design": "Slim misting line under a canopy",
+        "reason": "Evaporative cooling; effective only in dry climates.",
+    },
+    "green_facade": {
+        "target": "wall",
+        "heat_mechanism": "biological_evapotranspiration",
+        "placement": "Trellises on blank walls",
+        "visual_design": "Climbing plants on steel trellises",
+        "reason": "Shades walls with vegetation where owners commit to maintenance.",
+    },
+}
+
+CATALOG: Dict[str, Dict[str, str]] = {
+    t: {"title": get_spec(t).title, **text} for t, text in CATALOG_TEXT.items()
 }
 
 
@@ -525,8 +566,8 @@ def synthesize_design_intent(
 
     # 5. Soft Constraints
     soft_constraints = [
-        "space trees 8-10m in perspective to ensure continuous canopy overlap",
-        "maintain minimum 1.5m clear pedestrian walking path along sidewalk",
+        f"space young street trees about {_TREE_SPACING:.0f} m apart at the kerb edge",
+        f"keep a {get_spec('tree_canopy').min_clear_width_m:.1f} m clear walkway after every fixture",
         "align planting pits with curbside rhythm and depth recession",
     ]
 
@@ -566,7 +607,7 @@ def synthesize_design_intent(
             "increase permeable ground infiltration where feasible",
         ]
         acceptable_interventions = [
-            "mature street trees",
+            "young street trees in tree pits",
             "porous sidewalk tree planting pits",
             "permeable interlocking sidewalk pavers",
         ]
@@ -585,7 +626,7 @@ def synthesize_design_intent(
         veg_prio = 0.85
         perm_prio = 0.65
         alb_prio = 0.40 if is_heritage else 0.70
-        visual_char = "mature broad-canopy street trees with natural bark trunks in flush sidewalk pits"
+        visual_char = CATALOG["tree_canopy"]["visual_design"]
         rationale = (
             f"Pedestrian solar exposure ({wider_sw.solar_exposure:.2f}) and existing canopy deficit "
             f"({veg_dist.get('pedestrian_shade_coverage', 0.0):.1f}% shade) make shading and evapotranspiration the dominant resilience mechanisms. "
@@ -608,7 +649,7 @@ def synthesize_design_intent(
             "permeable interlocking pavers",
         ]
         rejected_interventions = [
-            "deep-root mature street trees (sidewalk width too narrow, obstructs walkway)",
+            "sidewalk tree pits (sidewalk width too narrow, obstructs walkway)",
             "planter boxes and raised barriers (restricts pedestrian circulation)",
             "decorative flower beds (provides zero overhead shade)",
         ]
@@ -1024,10 +1065,10 @@ def generate_spatial_plan(
                 "feasibility": feas,
                 "coverage": cov,
                 "heat_mechanism": "shading_and_evapotranspiration",
-                "what": "Mature leafy street trees with natural bark trunks grounded in sidewalk planting pits",
+                "what": CATALOG["tree_canopy"]["visual_design"],
                 "where": "Curbside planting alignment along left sidewalk margin",
                 "why": "Intercepts direct solar exposure on pedestrian path and cools ambient air via evapotranspiration",
-                "placement": "Curbside planting pits along left street verge spaced 8-10m in perspective",
+                "placement": f"{CATALOG['tree_canopy']['placement']} (left sidewalk)",
                 "visual_design": CATALOG["tree_canopy"]["visual_design"],
                 "reason": CATALOG["tree_canopy"]["reason"],
                 "cooling": round(1.2 * (0.6 + 0.4 * cov), 1),
@@ -1047,10 +1088,10 @@ def generate_spatial_plan(
                 "feasibility": feas,
                 "coverage": cov,
                 "heat_mechanism": "shading_and_evapotranspiration",
-                "what": "Mature leafy street trees with natural bark trunks grounded in sidewalk planting pits",
+                "what": CATALOG["tree_canopy"]["visual_design"],
                 "where": "Curbside planting alignment along right sidewalk margin",
                 "why": "Provides solar interception and continuous pedestrian shade on right sidewalk corridor",
-                "placement": "Curbside planting pits along right street verge spaced 8-10m in perspective",
+                "placement": f"{CATALOG['tree_canopy']['placement']} (right sidewalk)",
                 "visual_design": CATALOG["tree_canopy"]["visual_design"],
                 "reason": CATALOG["tree_canopy"]["reason"],
                 "cooling": round(1.2 * (0.6 + 0.4 * cov), 1),

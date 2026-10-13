@@ -94,3 +94,40 @@ def test_metrics_without_road_is_unavailable():
     z = np.zeros((300, 400), bool)
     m = estimate_street_metrics(z, z, z, 7.0)
     assert not m.reliable and m.left_sidewalk_m is None
+
+
+# ---------------------------------------------------------------------------
+# 2. Buildable catalog
+# ---------------------------------------------------------------------------
+from buildable import catalog_types, get_spec
+from buildable.config import CONFIG_LABEL
+
+NEW_TYPES = ["facade_awning", "bus_shelter", "solar_canopy", "kerb_bioswale", "parking_lane_tree", "cool_wall"]
+EXISTING_TYPES = ["tree_canopy", "green_roof", "cool_roof", "cool_pavement", "permeable_pave", "shade_structure"]
+
+
+@pytest.mark.parametrize("itype", NEW_TYPES + EXISTING_TYPES)
+def test_catalog_entry_has_engineering_spec(itype):
+    spec = get_spec(itype)
+    assert spec is not None, itype
+    assert spec.dimensions and spec.unit and spec.maintenance and spec.permits
+    assert spec.lifespan_years > 0
+    lo, hi = spec.cost_inr
+    assert 0 < lo <= hi
+    c_lo, c_mid, c_hi = spec.cooling_c
+    assert 0 <= c_lo <= c_mid <= c_hi
+    assert spec.phase in ("quick_win", "medium", "long_term")
+    assert "{zones}" in spec.kontext
+    assert spec.source == CONFIG_LABEL
+
+
+def test_config_is_labelled_indicative():
+    assert "indicative" in CONFIG_LABEL and "Schedule of Rates" in CONFIG_LABEL
+
+
+def test_awning_depth_and_planner_text_come_from_config():
+    import planner
+    assert get_spec("facade_awning").dimensions["depth_m"] == pytest.approx(1.2)
+    spacing = get_spec("tree_canopy").spacing_m
+    assert f"{spacing:.0f} m apart" in planner.CATALOG["tree_canopy"]["placement"]
+    assert set(planner.CATALOG) <= set(catalog_types())
