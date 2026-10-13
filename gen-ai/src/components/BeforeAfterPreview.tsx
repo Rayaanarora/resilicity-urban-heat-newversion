@@ -96,6 +96,9 @@ export const BeforeAfterPreview: React.FC = () => {
               <Cpu className="w-3 h-3 text-emerald-600" />
               AI Resilient Concept · ML Thermal Impact
             </span>
+            <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 font-bold border border-amber-200">
+              Illustrative · the spec is the deliverable
+            </span>
           </div>
           <h3
             className={`text-xl font-bold font-sans ${
@@ -247,7 +250,7 @@ export const BeforeAfterPreview: React.FC = () => {
 
             <div className="absolute top-4 right-4 bg-[#0d7a5f]/95 backdrop-blur-md border border-emerald-400/40 text-white px-3 py-1.5 rounded-lg text-xs font-mono font-bold tracking-wider uppercase shadow-md flex items-center gap-1.5 z-30">
               <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
-              <span>AI RESILIENT REDESIGN</span>
+              <span>ILLUSTRATIVE AI CONCEPT</span>
             </div>
 
             {/* Divider Handle */}
@@ -290,7 +293,7 @@ export const BeforeAfterPreview: React.FC = () => {
               )}
               <span className="absolute top-3 left-3 bg-[#0d7a5f]/90 text-white font-mono text-xs px-2.5 py-1 rounded-md border border-emerald-400/40 flex items-center gap-1.5">
                 <Sparkles className="w-3 h-3 text-emerald-300" />
-                AI RESILIENT REDESIGN
+                ILLUSTRATIVE AI CONCEPT
               </span>
             </div>
           </div>
@@ -404,7 +407,7 @@ export const BeforeAfterPreview: React.FC = () => {
       {/* Distinction Note (Requirement 18) */}
       <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl px-4 py-2.5 flex items-center justify-between text-[11px] text-amber-900 font-sans">
         <span>
-          <strong>Concept Visualization:</strong> The rendered image is an AI-generated resilient streetscape concept. Thermal impact is quantitatively computed by the trained HistGradientBoosting ML model.
+          <strong>Illustrative only:</strong> the AI image shows design intent and is not to scale; the specification (implementation plan and dimensioned cross-section below) is the deliverable. Cooling figures come from the planner and the heat model, not from the image.
         </span>
         <span className="font-mono text-amber-700 font-semibold shrink-0 ml-3">ML ΔT Assessment</span>
       </div>
@@ -423,7 +426,7 @@ export const BeforeAfterPreview: React.FC = () => {
         </div>
 
         <span className="text-[11px] text-slate-400">
-          Autonomous Urban Planning · Local SD Inpainting on RTX 3050 6GB
+          Autonomous Urban Planning · FLUX.1 Kontext concept image
         </span>
       </div>
     </div>

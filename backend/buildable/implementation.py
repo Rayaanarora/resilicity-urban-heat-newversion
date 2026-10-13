@@ -86,6 +86,7 @@ def line_item(item: Dict[str, Any], metrics: StreetMetrics) -> ImplementationLin
         phase=spec.phase, phase_label=spec.phase_label, lifespan_years=spec.lifespan_years,
         maintenance=spec.maintenance, permits=list(spec.permits), conditions=list(item.get("conditions", [])),
         extra=extra,
+        dimensions=dict(spec.dimensions),
     )
 
 
@@ -175,5 +176,7 @@ def build_implementation_plan(
         budget_excluded=budget_excluded or [],
         prerequisites=prerequisites,
         assumptions=assumptions,
+        clearances={k: CLEARANCES[k] for k in (
+            "min_clear_walkway_m", "kerb_buffer_m", "min_vertical_clearance_m", "parking_lane_width_m")},
         source=CONFIG_LABEL,
     )

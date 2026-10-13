@@ -147,12 +147,16 @@ export async function fetchAnalyzeAndRedesign(
   designProfile: string = 'balanced',
   requestedInterventions?: string[],
   qualityTier: 'fast' | 'final' = 'fast',
-  refinementPrompt?: string
+  refinementPrompt?: string,
+  site?: { roadWidthM?: number | null; budgetLakh?: number | null; climateZone?: string | null }
 ): Promise<import('../types/resilicity').UnifiedRedesignResponse> {
   const form = new FormData();
   form.append('image', file);
   form.append('design_profile', designProfile);
   form.append('quality_tier', qualityTier);
+  if (site?.roadWidthM) form.append('road_width_m', String(site.roadWidthM));
+  if (site?.budgetLakh) form.append('budget_lakh', String(site.budgetLakh));
+  if (site?.climateZone) form.append('climate_zone', site.climateZone);
   if (requestedInterventions && requestedInterventions.length > 0) {
     form.append('requested_interventions', JSON.stringify(requestedInterventions));
   }

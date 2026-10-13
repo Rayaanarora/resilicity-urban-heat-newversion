@@ -70,7 +70,7 @@ export const ProjectedImpactCard: React.FC = () => {
 
       <div className="flex items-center justify-center gap-1.5 text-xs font-mono text-slate-400">
         <RotateCw className="w-3.5 h-3.5" />
-        <span>Autonomous Local SDXL · RTX 3050</span>
+        <span>Indicative · see implementation plan for ranges</span>
       </div>
     </div>
   );

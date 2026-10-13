@@ -174,7 +174,7 @@ export const CoolingPlanCard: React.FC = () => {
 
         <div className="flex items-center justify-between text-[11px] text-slate-500 font-sans px-1">
           <span>Interventions autonomously selected from SegFormer surface perception.</span>
-          <span className="font-mono text-emerald-700 font-semibold">Local SDXL · RTX 3050 6GB</span>
+          <span className="font-mono text-emerald-700 font-semibold">Gated by street dimensions</span>
         </div>
       </div>
     </div>

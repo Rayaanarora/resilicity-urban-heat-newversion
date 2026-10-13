@@ -38,14 +38,22 @@ export interface SegmentationResponse {
   masks: SurfaceMask[];
 }
 
-export type InterventionType = 
-  | 'cool_roof' 
-  | 'tree_canopy' 
-  | 'cool_pavement' 
-  | 'shade_structure' 
+export type InterventionType =
+  | 'cool_roof'
+  | 'tree_canopy'
+  | 'cool_pavement'
+  | 'shade_structure'
   | 'shade_canopy'
-  | 'green_roof' 
-  | 'permeable_pave';
+  | 'green_roof'
+  | 'permeable_pave'
+  | 'facade_awning'
+  | 'bus_shelter'
+  | 'solar_canopy'
+  | 'kerb_bioswale'
+  | 'parking_lane_tree'
+  | 'cool_wall'
+  | 'misting_system'
+  | 'green_facade';
 
 export type CostTier = 'low' | 'med' | 'high';
 
@@ -140,6 +148,82 @@ export interface SpatialInterventionSpec {
   cooling_impact_c: number;
   confidence: number;
   title?: string;
+  target_zone?: string | null;
+  evidence?: string[];
+  spatial_constraints?: string[];
+}
+
+/** Sidewalk/road widths in metres estimated from the photo (carriageway as scale reference). */
+export interface StreetMetrics {
+  road_width_m: number;
+  scale_source: 'user' | 'default' | string;
+  left_sidewalk_m?: number | null;
+  right_sidewalk_m?: number | null;
+  left_range_m?: [number, number] | null;
+  right_range_m?: [number, number] | null;
+  uncertainty_pct: number;
+  road_truncated: boolean;
+  rows_used: number;
+  scale_available?: boolean;
+  reliable: boolean;
+  notes: string[];
+}
+
+export interface ImplementationLineItem {
+  type: string;
+  title: string;
+  target_zone?: string | null;
+  quantity: number;
+  unit: string;
+  basis: string;
+  quantity_flagged: boolean;
+  cost_inr_low: number;
+  cost_inr_high: number;
+  cooling_c: number;
+  cooling_per_lakh_c: number;
+  phase: 'quick_win' | 'medium' | 'long_term' | string;
+  phase_label: string;
+  lifespan_years: number;
+  maintenance: string;
+  permits: string[];
+  conditions: string[];
+  extra?: Record<string, number>;
+  dimensions?: Record<string, number | number[]>;
+}
+
+export interface ImplementationPhase {
+  phase: string;
+  label: string;
+  items: string[];
+  cost_inr_low: number;
+  cost_inr_high: number;
+}
+
+export interface RejectedCandidate {
+  type: string;
+  target_zone?: string | null;
+  reason: string;
+  conflict?: string;
+  rule?: string;
+  measured?: Record<string, unknown>;
+}
+
+/** Bill of quantities, indicative costs, phasing and permits per street_length_m of street. */
+export interface ImplementationPlan {
+  street_length_m: number;
+  line_items: ImplementationLineItem[];
+  phases: ImplementationPhase[];
+  total_cost_inr_low: number;
+  total_cost_inr_high: number;
+  total_cooling_c: number;
+  cooling_per_lakh_c: number;
+  budget_lakh?: number | null;
+  within_budget?: boolean | null;
+  budget_excluded: RejectedCandidate[];
+  prerequisites: string[];
+  assumptions: string[];
+  clearances?: Record<string, number>;
+  source: string;
 }
 
 export interface SpatialDesignPlan {
@@ -149,6 +233,9 @@ export interface SpatialDesignPlan {
   design_profile: DesignProfile;
   interventions: SpatialInterventionSpec[];
   overall_design_intent: string;
+  rejected_candidates?: RejectedCandidate[];
+  street_metrics?: StreetMetrics | null;
+  implementation_plan?: ImplementationPlan | null;
 }
 
 export interface SceneAnalysis {
@@ -225,6 +312,15 @@ export interface UnifiedRedesignResponse {
     mlModelDeltaC: number;
     methodology: string;
     disclaimer: string;
+    coolingRangeC?: [number, number];
+    perIntervention?: { type: string; coolingC: number; rangeC: [number, number] }[];
+    unmodelledInterventions?: string[];
+    mlModelR2?: number | null;
+    mlModelRmseC?: number | null;
+    mlModelDeltaRangeC?: [number, number] | null;
+    confidence?: string;
+    confidenceNote?: string;
+    warning?: string;
   };
   validation: ValidationReport;
 }

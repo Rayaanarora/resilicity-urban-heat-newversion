@@ -16,6 +16,7 @@ import type {
   SceneAnalysis,
   SpatialDesignPlan,
   SurfaceMask,
+  UnifiedRedesignResponse,
   VisualizationOutput,
 } from '../types/resilicity';
 
@@ -54,7 +55,14 @@ interface ResiliCityStoreState {
   spatialDesignPlan: SpatialDesignPlan | null;
   sceneAnalysis: SceneAnalysis | null;
   visualizationOutput: VisualizationOutput | null;
+  thermalImpact: UnifiedRedesignResponse['thermal_impact'] | null;
   generationStage: string | null;
+
+  // Site inputs for the buildable plan (optional; backend defaults apply when null)
+  roadWidthM: number | null;
+  setRoadWidthM: (m: number | null) => void;
+  budgetLakh: number | null;
+  setBudgetLakh: (lakh: number | null) => void;
 
   // Interventions (Autonomous AI Selected - Informational)
   interventions: Intervention[];
@@ -130,7 +138,13 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
     spatialDesignPlan: null,
     sceneAnalysis: null,
     visualizationOutput: null,
+    thermalImpact: null,
     generationStage: null,
+
+    roadWidthM: null,
+    setRoadWidthM: (m) => set({ roadWidthM: m }),
+    budgetLakh: null,
+    setBudgetLakh: (lakh) => set({ budgetLakh: lakh }),
 
     interventions: initialScene.interventions,
     activeInterventionIds: initialDefaultActiveIds,
@@ -185,6 +199,7 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
         spatialDesignPlan: null,
         sceneAnalysis: null,
         visualizationOutput: null,
+        thermalImpact: null,
         generationStage: null,
         imageDimensions: { width: 1024, height: 683 },
         activeTab: 'analysis',
@@ -252,6 +267,9 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
         designProfile,
         qualityTier,
         currentSceneId,
+        roadWidthM,
+        budgetLakh,
+        climateZone,
       } = get();
 
       const selectedTier = tierOverride || qualityTier;
@@ -290,7 +308,9 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
           fileToSend,
           designProfile,
           undefined, // Autonomous: planner decides interventions
-          selectedTier
+          selectedTier,
+          undefined,
+          { roadWidthM, budgetLakh, climateZone }
         );
 
         set({ generationStage: 'VALIDATING RESULT' });
@@ -357,6 +377,7 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
 
         // Update thermal impact numbers
         if (result.thermal_impact) {
+          set({ thermalImpact: result.thermal_impact });
           const deltaC = result.thermal_impact.totalCoolingReductionC;
           set((state) => ({
             heatMetrics: {

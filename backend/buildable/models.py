@@ -44,6 +44,7 @@ class ImplementationLineItem(BaseModel):
     permits: List[str] = Field(default_factory=list)
     conditions: List[str] = Field(default_factory=list)
     extra: Dict[str, float] = Field(default_factory=dict, description="Type-specific outputs, e.g. kWp")
+    dimensions: Dict[str, Any] = Field(default_factory=dict, description="Catalog dimensions (for drawings)")
 
 
 class ImplementationPhase(BaseModel):
@@ -68,4 +69,5 @@ class ImplementationPlan(BaseModel):
     budget_excluded: List[Dict[str, Any]] = Field(default_factory=list)
     prerequisites: List[str] = Field(default_factory=list)
     assumptions: List[str] = Field(default_factory=list)
+    clearances: Dict[str, float] = Field(default_factory=dict, description="Clearances used (for drawings)")
     source: str = ""

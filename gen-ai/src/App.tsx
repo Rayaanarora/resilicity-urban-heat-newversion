@@ -7,6 +7,8 @@ import { HeatRiskScoreCard } from './components/HeatRiskScoreCard';
 import { BeforeAfterPreview } from './components/BeforeAfterPreview';
 import { CoolingPlanCard } from './components/CoolingPlanCard';
 import { ProjectedImpactCard } from './components/ProjectedImpactCard';
+import { ImplementationPlanCard } from './components/ImplementationPlanCard';
+import { StreetCrossSection } from './components/StreetCrossSection';
 import { Footer } from './components/Footer';
 import { ImpactReportModal } from './components/ImpactReportModal';
 import { SavedRunsView } from './components/SavedRunsView';
@@ -61,8 +63,12 @@ export const App: React.FC = () => {
             {/* 2. Recommended Interventions & AI Urban Design Strategy */}
             <CoolingPlanCard />
 
-            {/* 3. Hero Generative Before/After Redesign Visualization */}
+            {/* 3. Hero Generative Before/After Redesign Visualization (illustrative) */}
             <BeforeAfterPreview />
+
+            {/* 3b. The deliverable: dimensioned section and implementation plan */}
+            <StreetCrossSection />
+            <ImplementationPlanCard />
 
             {/* 4. Heat Risk Score & Projected Thermal Impact Explanation */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">

@@ -61,7 +61,7 @@ CATALOG = {
     "tree_canopy": {
         "title": "Young Street Trees in Tree Pits",
         "zone_kind": "sidewalk",
-        "dimensions": {"pit_m": 1.2, "planting_height_m": 4.0, "girth_mm": 60},
+        "dimensions": {"pit_m": 1.2, "planting_height_m": 4.0, "girth_mm": 60, "canopy_diameter_m": 2.5},
         "spacing_m": 8.0,
         "min_clear_width_m": 1.8,
         "unit": "tree",
@@ -79,7 +79,7 @@ CATALOG = {
     "parking_lane_tree": {
         "title": "Parking-Lane Trees in Kerb Build-Outs",
         "zone_kind": "kerb",
-        "dimensions": {"buildout_m": (2.0, 3.0), "planting_height_m": 4.0},
+        "dimensions": {"buildout_m": (2.0, 3.0), "planting_height_m": 4.0, "canopy_diameter_m": 2.5},
         "spacing_m": 10.0,
         "min_clear_width_m": 0.0,
         "unit": "tree + build-out",
