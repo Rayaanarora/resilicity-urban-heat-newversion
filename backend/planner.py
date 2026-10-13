@@ -34,7 +34,7 @@ from image_generation.schemas import (
     SpatialDesignPlan,
     SpatialInterventionSpec,
 )
-from buildable import estimate_street_metrics, get_spec
+from buildable import build_implementation_plan, estimate_street_metrics, get_spec, select_within_budget
 from buildable.config import CLEARANCES
 from buildable.gating import GateResult, SiteContext, gate
 from buildable.observations import observe_site
@@ -985,6 +985,7 @@ def generate_spatial_plan(
     requested_types: Optional[List[str]] = None,
     road_width_m: Optional[float] = None,
     climate_zone: Optional[str] = None,
+    budget_lakh: Optional[float] = None,
 ) -> SpatialDesignPlan:
     """Autonomously generate an intelligent urban resilience design plan.
 
@@ -1093,6 +1094,7 @@ def generate_spatial_plan(
                 "why": "Intercepts direct solar exposure on pedestrian path and cools ambient air via evapotranspiration",
                 "placement": f"{CATALOG['tree_canopy']['placement']} (left sidewalk)",
                 "conditions": left_gate.conditions,
+                "excluded_length_m": left_gate.excluded_length_m,
                 "visual_design": CATALOG["tree_canopy"]["visual_design"],
                 "reason": CATALOG["tree_canopy"]["reason"],
                 "cooling": round(1.2 * (0.6 + 0.4 * cov), 1),
@@ -1118,6 +1120,7 @@ def generate_spatial_plan(
                 "why": "Provides solar interception and continuous pedestrian shade on right sidewalk corridor",
                 "placement": f"{CATALOG['tree_canopy']['placement']} (right sidewalk)",
                 "conditions": right_gate.conditions,
+                "excluded_length_m": right_gate.excluded_length_m,
                 "visual_design": CATALOG["tree_canopy"]["visual_design"],
                 "reason": CATALOG["tree_canopy"]["reason"],
                 "cooling": round(1.2 * (0.6 + 0.4 * cov), 1),
@@ -1207,6 +1210,16 @@ def generate_spatial_plan(
 
     chosen_candidates: List[Dict[str, Any]] = []
     remaining_candidates = list(candidates)
+    budget_excluded: List[Dict[str, Any]] = []
+
+    if budget_lakh:
+        # Budget mode: rank by cooling per lakh within the cap instead of the 1-4 item utility budget.
+        chosen_candidates, budget_excluded = select_within_budget(
+            candidates, budget_lakh, street_metrics,
+            lambda cand, chosen: evaluate_interactions(cand["type"], cand["target_zone"], chosen, scene),
+        )
+        rejected_candidates.extend(budget_excluded)
+        remaining_candidates = []
 
     while len(chosen_candidates) < max_budget and remaining_candidates:
         best_cand = None
@@ -1254,7 +1267,7 @@ def generate_spatial_plan(
         ((g, z) for z in ("left_sidewalk", "right_sidewalk") for g in (gate("tree_canopy", z, site_ctx),) if g.allowed),
         (None, None),
     )
-    if not chosen_candidates:
+    if not chosen_candidates and not budget_lakh:
         if candidates:
             chosen_candidates.append(candidates[0])
         elif fallback_zone:
@@ -1411,6 +1424,7 @@ def generate_spatial_plan(
         baseline_state=baseline_state,
         post_intervention_state=post_state,
         street_metrics=street_metrics,
+        implementation_plan=build_implementation_plan(chosen_candidates, street_metrics, budget_lakh, budget_excluded),
     )
 
 

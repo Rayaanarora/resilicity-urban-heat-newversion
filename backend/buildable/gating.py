@@ -37,6 +37,8 @@ class GateResult:
     conditions: List[str] = field(default_factory=list)
     # Sub-items excluded even though the intervention is allowed (e.g. pits inside a sight triangle).
     partial_rejections: List[Dict[str, Any]] = field(default_factory=list)
+    # Street length (m) excluded from planting, e.g. a junction setback.
+    excluded_length_m: float = 0.0
 
     def rejection(self, itype: str, zone: str) -> Dict[str, Any]:
         return {"type": itype, "target_zone": zone, "reason": self.reason, "conflict": self.rule,
@@ -103,6 +105,7 @@ def _obstacle_check(itype: str, zone: str, ctx: SiteContext, groups: List[str]) 
 def _junction_setback(itype: str, zone: str, ctx: SiteContext, result: GateResult) -> GateResult:
     if ctx.observations.junction_suspected.get(zone):
         d = CLEARANCES["junction_sight_clearance_m"]
+        result.excluded_length_m = d
         result.conditions.append(f"Keep the first {d:.0f} m from the junction on the {_zone_label(zone)} free of trees (sight triangle).")
         result.partial_rejections.append({
             "type": itype, "target_zone": zone, "rule": "junction_sight_line", "conflict": "junction_sight_line",

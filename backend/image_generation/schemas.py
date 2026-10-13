@@ -3,7 +3,7 @@
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
-from buildable.models import StreetMetrics
+from buildable.models import ImplementationPlan, StreetMetrics
 
 
 DesignProfile = Literal[
@@ -180,6 +180,7 @@ class SpatialDesignPlan(BaseModel):
 
     # Buildable design (all optional for backward compatibility)
     street_metrics: Optional[StreetMetrics] = Field(default=None, description="Sidewalk/road widths in metres with uncertainty")
+    implementation_plan: Optional[ImplementationPlan] = Field(default=None, description="Bill of quantities, cost, phases and permits per 100 m")
 
 
 class SceneAnalysis(BaseModel):

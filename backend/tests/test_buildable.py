@@ -244,3 +244,92 @@ def test_planner_writes_gating_reasons_to_rejected_candidates():
     tree_rejections = [r for r in plan.rejected_candidates if r["type"] == "tree_canopy"]
     assert tree_rejections and all(r["reason"] and r["rule"] for r in tree_rejections)
     assert all(iv.type != "tree_canopy" for iv in plan.interventions)
+
+
+# ---------------------------------------------------------------------------
+# 4. Implementation plan and budget selection
+# ---------------------------------------------------------------------------
+import math
+
+from buildable import build_implementation_plan, select_within_budget
+from buildable.config import BUDGET
+from buildable.implementation import mid_cost_lakh
+
+LENGTH = CLEARANCES["street_length_m"]
+
+
+def _m(left=4.0, right=4.0, road=7.0):
+    return StreetMetrics(road_width_m=road, left_sidewalk_m=left, right_sidewalk_m=right, scale_available=True)
+
+
+def test_tree_quantity_uses_spacing_and_junction_setback():
+    spacing = get_spec("tree_canopy").spacing_m
+    plain = build_implementation_plan([{"type": "tree_canopy", "target_zone": "left_sidewalk"}], _m())
+    assert plain.line_items[0].quantity == math.floor(LENGTH / spacing)
+    setback = CLEARANCES["junction_sight_clearance_m"]
+    near_junction = build_implementation_plan(
+        [{"type": "tree_canopy", "target_zone": "left_sidewalk", "excluded_length_m": setback}], _m())
+    assert near_junction.line_items[0].quantity == math.floor((LENGTH - setback) / spacing)
+    assert "junction setback" in near_junction.line_items[0].basis
+
+
+def test_line_item_costs_cooling_per_lakh_and_phases():
+    items = [
+        {"type": "cool_wall", "target_zone": "left_sidewalk", "cooling": 0.3},
+        {"type": "tree_canopy", "target_zone": "left_sidewalk", "cooling": 1.2},
+    ]
+    plan = build_implementation_plan(items, _m())
+    wall, tree = plan.line_items
+    lo, hi = get_spec("cool_wall").cost_inr
+    assert (wall.cost_inr_low, wall.cost_inr_high) == (round(wall.quantity * lo), round(wall.quantity * hi))
+    mid_lakh = (tree.cost_inr_low + tree.cost_inr_high) / 2 / BUDGET["inr_per_lakh"]
+    assert tree.cooling_per_lakh_c == pytest.approx(1.2 / mid_lakh, rel=1e-2)
+    assert plan.total_cost_inr_low == wall.cost_inr_low + tree.cost_inr_low
+    assert [p.phase for p in plan.phases] == ["quick_win", "medium"]
+    assert any("Horticulture" in p for p in plan.prerequisites)
+    assert plan.street_length_m == LENGTH
+
+
+def test_unmeasured_quantities_are_flagged():
+    plan = build_implementation_plan([{"type": "permeable_pave", "target_zone": "left_sidewalk", "coverage": 0.5}],
+                                     _m(left=None))
+    assert plan.line_items[0].quantity_flagged and "not measured" in plan.line_items[0].basis
+
+
+def test_budget_selection_prefers_cost_effectiveness_within_cap():
+    m = _m()
+    cands = [
+        {"type": "bus_shelter", "target_zone": "left_sidewalk", "cooling": 0.3, "utility": 0.9},
+        {"type": "cool_wall", "target_zone": "left_sidewalk", "cooling": 0.3, "utility": 0.5},
+        {"type": "tree_canopy", "target_zone": "left_sidewalk", "cooling": 1.2, "utility": 0.8},
+    ]
+    budget = mid_cost_lakh(cands[1], m) + mid_cost_lakh(cands[2], m) + 0.1   # not enough for the shelter too
+    chosen, excluded = select_within_budget(cands, budget, m, lambda c, ch: (0.0, [], [], False))
+    assert {c["type"] for c in chosen} == {"cool_wall", "tree_canopy"}
+    assert sum(mid_cost_lakh(c, m) for c in chosen) <= budget
+    assert excluded and excluded[0]["type"] == "bus_shelter" and excluded[0]["rule"] == "over_budget"
+
+
+def test_budget_selection_respects_interaction_rejections():
+    m = _m()
+    cands = [{"type": "tree_canopy", "target_zone": "left_sidewalk", "cooling": 1.2},
+             {"type": "cool_wall", "target_zone": "left_sidewalk", "cooling": 0.3}]
+    chosen, _ = select_within_budget(cands, 1000.0, m, lambda c, ch: (0.0, [], [], c["type"] == "cool_wall"))
+    assert [c["type"] for c in chosen] == ["tree_canopy"]
+
+
+def test_planner_budget_mode_stays_within_cap():
+    from PIL import Image
+    from planner import generate_spatial_plan
+    w, h = 640, 480
+    raw = np.full((h, w), 2, np.int32)
+    raw[: int(h * 0.55), :] = 0
+    raw[int(h * 0.55):, :160] = 3
+    raw[int(h * 0.55):, 160:480] = 6
+    raw[int(h * 0.55):, 480:] = 3
+    seg = {"raw_preds": raw, "masks": [], "protected_objects": []}
+    plan = generate_spatial_plan(Image.new("RGB", (w, h)), {"road": 35.0, "pavement": 20.0, "wall": 35.0},
+                                 seg_result=seg, road_width_m=7.0, budget_lakh=5.0)
+    ip = plan.implementation_plan
+    assert ip is not None and ip.budget_lakh == 5.0 and ip.within_budget
+    assert (ip.total_cost_inr_low + ip.total_cost_inr_high) / 2 <= 5.0 * BUDGET["inr_per_lakh"]

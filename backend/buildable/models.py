@@ -1,6 +1,6 @@
 """Pydantic models for buildable-design outputs (kept free of image_generation imports)."""
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -22,3 +22,50 @@ class StreetMetrics(BaseModel):
 
     def sidewalk_m(self, zone: str) -> Optional[float]:
         return {"left_sidewalk": self.left_sidewalk_m, "right_sidewalk": self.right_sidewalk_m}.get(zone)
+
+
+class ImplementationLineItem(BaseModel):
+    """One bill-of-quantities line for a selected intervention, per street_length_m of street."""
+    type: str
+    title: str
+    target_zone: Optional[str] = None
+    quantity: float
+    unit: str
+    basis: str = Field(default="", description="How the quantity was derived")
+    quantity_flagged: bool = Field(default=False, description="Quantity uses a default instead of a measurement")
+    cost_inr_low: int
+    cost_inr_high: int
+    cooling_c: float = Field(default=0.0, description="Indicative localized cooling attributed to this item")
+    cooling_per_lakh_c: float = Field(default=0.0, description="Cooling per lakh rupees at mid cost")
+    phase: str
+    phase_label: str
+    lifespan_years: int
+    maintenance: str
+    permits: List[str] = Field(default_factory=list)
+    conditions: List[str] = Field(default_factory=list)
+    extra: Dict[str, float] = Field(default_factory=dict, description="Type-specific outputs, e.g. kWp")
+
+
+class ImplementationPhase(BaseModel):
+    phase: str
+    label: str
+    items: List[str] = Field(default_factory=list)
+    cost_inr_low: int = 0
+    cost_inr_high: int = 0
+
+
+class ImplementationPlan(BaseModel):
+    """Bill of quantities, indicative costs, phasing and permits per street_length_m of street."""
+    street_length_m: float
+    line_items: List[ImplementationLineItem] = Field(default_factory=list)
+    phases: List[ImplementationPhase] = Field(default_factory=list)
+    total_cost_inr_low: int = 0
+    total_cost_inr_high: int = 0
+    total_cooling_c: float = 0.0
+    cooling_per_lakh_c: float = 0.0
+    budget_lakh: Optional[float] = None
+    within_budget: Optional[bool] = None
+    budget_excluded: List[Dict[str, Any]] = Field(default_factory=list)
+    prerequisites: List[str] = Field(default_factory=list)
+    assumptions: List[str] = Field(default_factory=list)
+    source: str = ""

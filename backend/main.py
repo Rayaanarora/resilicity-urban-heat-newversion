@@ -229,6 +229,7 @@ async def analyze_and_redesign(
     refinement_prompt: Optional[str] = Form(None),
     road_width_m: Optional[float] = Form(None),
     climate_zone: Optional[str] = Form(None),
+    budget_lakh: Optional[float] = Form(None),
 ):
     """End-to-end Autonomous Generative AI urban resilience pipeline.
     
@@ -273,6 +274,7 @@ async def analyze_and_redesign(
         design_profile=design_profile,  # type: ignore
         road_width_m=road_width_m,
         climate_zone=climate_zone,
+        budget_lakh=budget_lakh,
     )
     analysis = analyze_scene_heuristics(pil_img, surfaces)
 

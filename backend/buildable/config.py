@@ -276,3 +276,21 @@ CATALOG = {
         "kontext": "add climbing plants on steel trellises on parts of the walls along {zones}",
     },
 }
+
+# Quantity rules for the implementation plan (per CLEARANCES["street_length_m"] of street, per zone).
+QUANTITY = {
+    "awning_frontage_share": 0.6,     # share of frontage with shopfronts that receive awnings
+    "cool_wall_frontage_share": 0.7,  # share of frontage with sun-facing walls
+    "canopy_length_share": 0.5,       # share of street length covered by tensile / PV canopies
+    "misting_length_share": 0.3,
+    "green_facade_frontage_share": 0.3,
+    "bus_shelters_per_length": 1,     # only where a bus stop exists
+}
+
+# ---------------------------------------------------------------------------
+# 5. Budget selection
+# ---------------------------------------------------------------------------
+BUDGET = {
+    "inr_per_lakh": 100_000,
+    "max_interventions_with_budget": 8,
+}
