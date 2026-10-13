@@ -183,7 +183,7 @@ export const ImpactReportModal: React.FC<ImpactReportModalProps> = ({ isOpen, on
                 Confidence & Methodology
               </span>
               <p className="text-slate-600 text-[11px] leading-relaxed">
-                <strong>Methodology:</strong> Multi-stage perception via SegFormer computer vision constraints $\to$ Gemini spatial planning reasoning $\to$ Gemini multimodal architectural generative image editing. Thermal impact is calculated via satellite-calibrated Landsat regression with spatial cross-validation error bounds (±{heatMetrics.modelRmseC?.toFixed(1) || '0.8'}°C).
+                <strong>Methodology:</strong> SegFormer segmentation, metric street measurement and rule-based buildability gating select the interventions; FLUX.1 Kontext renders an illustrative image. Cooling uses literature-based ranges per intervention; the satellite land-surface regression is shown with its spatial cross-validation error (±{heatMetrics.modelRmseC?.toFixed(1) ?? '2.5'} °C).
               </p>
             </div>
 
