@@ -2,6 +2,7 @@ import React from 'react';
 import { Ruler } from 'lucide-react';
 import { useResiliCityStore } from '../store/useResiliCityStore';
 import type { ImplementationLineItem } from '../types/resilicity';
+import { Panel, Tag } from './ui';
 
 // Drawing geometry (viewBox units). All real dimensions come from the backend plan.
 const VB_W = 720;
@@ -24,10 +25,10 @@ export const StreetCrossSection: React.FC = () => {
 
   if (!metrics) {
     return (
-      <div className="rc-card p-6 text-sm text-slate-500">
-        <span className="rc-card-header-label">STREET CROSS-SECTION</span>
-        <p className="mt-2">Run an analysis to see the dimensioned cross-section.</p>
-      </div>
+      <Panel eyebrow="Street cross-section" title="Dimensioned section">
+        <div className="h-40 rc-shimmer" />
+        <p className="mt-3 text-sm text-slate-500">Run an analysis to draw the section from the measured street.</p>
+      </Panel>
     );
   }
 
@@ -87,7 +88,7 @@ export const StreetCrossSection: React.FC = () => {
       const cx = (pitOuter + pitInner) / 2;
       clearM = g.widthM - kerbBuffer - pitM;
       parts.push(
-        <g key={`${side}-tree`}>
+        <g key={`${side}-tree`} className="rc-grow-up">
           <rect x={pitX} y={swTop - 2} width={pitM * s} height={4} fill="#92400e" />
           <line x1={cx} y1={swTop} x2={cx} y2={swTop - heightM * v * 0.55} stroke="#78350f" strokeWidth={3} />
           <ellipse cx={cx} cy={swTop - heightM * v * 0.72} rx={(canopyM / 2) * s} ry={(canopyM / 2) * v}
@@ -143,11 +144,11 @@ export const StreetCrossSection: React.FC = () => {
             const c = num(kerbTree.dimensions?.canopy_diameter_m);
             const cx = (g.kerbX + laneEnd) / 2;
             return (
-              <>
+              <g className="rc-grow-up">
                 <line x1={cx} y1={GROUND_Y} x2={cx} y2={GROUND_Y - h * v * 0.55} stroke="#78350f" strokeWidth={3} />
                 <ellipse cx={cx} cy={GROUND_Y - h * v * 0.72} rx={(c / 2) * s} ry={(c / 2) * v}
                          fill="#16a34a" fillOpacity={0.75} />
-              </>
+              </g>
             );
           })()}
           <text x={(g.kerbX + laneEnd) / 2} y={GROUND_Y + 16} textAnchor="middle" className="fill-stone-600" fontSize={10}>
@@ -164,7 +165,7 @@ export const StreetCrossSection: React.FC = () => {
       const y = swTop - 12;
       parts.push(
         <g key={`${side}-clear`}>
-          <line x1={g.facadeX} y1={y} x2={end} y2={y} stroke={ok ? '#059669' : '#dc2626'} strokeWidth={1.5}
+          <line className="rc-draw" x1={g.facadeX} y1={y} x2={end} y2={y} stroke={ok ? '#059669' : '#dc2626'} strokeWidth={1.5}
                 markerStart="url(#tick)" markerEnd="url(#tick)" />
           <text x={(g.facadeX + end) / 2} y={y - 4} textAnchor="middle" fontSize={10}
                 className={ok ? 'fill-emerald-700' : 'fill-red-600'}>
@@ -185,7 +186,7 @@ export const StreetCrossSection: React.FC = () => {
 
   const dim = (a: number, b: number, label: string, y: number) => (
     <g>
-      <line x1={a} y1={y} x2={b} y2={y} stroke="#334155" strokeWidth={1} markerStart="url(#tick)" markerEnd="url(#tick)" />
+      <line className="rc-draw" x1={a} y1={y} x2={b} y2={y} stroke="#334155" strokeWidth={1} markerStart="url(#tick)" markerEnd="url(#tick)" />
       <text x={(a + b) / 2} y={y + 14} textAnchor="middle" fontSize={11} className="fill-slate-700">
         {label}
       </text>
@@ -196,19 +197,18 @@ export const StreetCrossSection: React.FC = () => {
     m ? `${fmt(m)}${r ? ` (${r[0].toFixed(1)}-${r[1].toFixed(1)})` : ''}` : 'n/a';
 
   return (
-    <div className="rc-card p-6 flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <span className="rc-card-header-label">STREET CROSS-SECTION</span>
-          <h3 className="text-xl font-semibold text-slate-900 font-sans">Dimensioned section (proposed)</h3>
-        </div>
-        <span className="flex items-center gap-1.5 text-[11px] font-mono text-slate-600 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg">
+    <Panel
+      eyebrow="Street cross-section"
+      title="Dimensioned section, proposed"
+      actions={
+        <Tag>
           <Ruler className="w-3.5 h-3.5" />
-          ±{metrics.uncertainty_pct}% · scale {metrics.scale_source === 'user' ? 'from your road width' : 'assumed'}
-        </span>
-      </div>
-
-      <div className="overflow-x-auto -mx-2 px-2">
+          ±{metrics.uncertainty_pct}% · scale {metrics.scale_source === 'user' ? 'from your carriageway width' : 'assumed'}
+        </Tag>
+      }
+    >
+      {/* key re-mounts the drawing so it animates again for each new plan */}
+      <div key={`${roadM}-${leftM}-${rightM}-${items.length}`} className="overflow-x-auto -mx-2 px-2">
         <svg viewBox={`0 0 ${VB_W} ${VB_H}`} className="w-full min-w-[560px] text-slate-700" role="img"
              aria-label="Dimensioned street cross-section">
           <defs>
@@ -236,12 +236,12 @@ export const StreetCrossSection: React.FC = () => {
       </div>
 
       {metrics.notes.length > 0 && (
-        <ul className="text-[11px] text-slate-500 font-sans list-disc pl-5 flex flex-col gap-0.5">
+        <ul className="mt-3 text-xs text-slate-500 list-disc pl-5 flex flex-col gap-0.5">
           {metrics.notes.map((n) => (
             <li key={n}>{n}</li>
           ))}
         </ul>
       )}
-    </div>
+    </Panel>
   );
 };

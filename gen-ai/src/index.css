@@ -19,6 +19,11 @@
     border-radius: 0 !important;
   }
 
+  /* Let grid/flex children shrink so inner scroll containers scroll instead of widening the page. */
+  .grid > *, main > *, section {
+    min-width: 0;
+  }
+
   body {
     @apply bg-[#f6f8fa] text-slate-800 font-sans antialiased overflow-x-hidden selection:bg-teal-500/20 selection:text-teal-900;
     font-variant-numeric: tabular-nums;
@@ -170,6 +175,122 @@ button:not(:disabled):active {
 
 .rc-row:hover {
   background-color: #f3f8f6;
+}
+
+/* Scan line sweeping a photo while it is being analysed */
+@keyframes rc-scan {
+  from { top: -30%; }
+  to   { top: 100%; }
+}
+
+.rc-scan {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.rc-scan::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 30%;
+  background: linear-gradient(to bottom, rgba(13, 122, 95, 0) 0%, rgba(13, 122, 95, 0.22) 85%, rgba(13, 122, 95, 0.75) 100%);
+  animation: rc-scan 1.8s linear infinite;
+}
+
+/* Shimmer placeholder */
+@keyframes rc-shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+
+.rc-shimmer {
+  background: linear-gradient(90deg, #eef2f1 25%, #dcebe5 50%, #eef2f1 75%);
+  background-size: 200% 100%;
+  animation: rc-shimmer 1.6s ease-in-out infinite;
+}
+
+/* Wipe reveal: new image is unveiled left to right */
+@keyframes rc-wipe {
+  from { clip-path: inset(0 100% 0 0); }
+  to   { clip-path: inset(0 0 0 0); }
+}
+
+.rc-wipe {
+  animation: rc-wipe 0.9s cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
+/* Square pulse around the slider handle, hinting it can be dragged */
+@keyframes rc-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(13, 122, 95, 0.55); }
+  70%  { box-shadow: 0 0 0 10px rgba(13, 122, 95, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(13, 122, 95, 0); }
+}
+
+.rc-pulse {
+  animation: rc-pulse 2s ease-out infinite;
+}
+
+/* Children enter one after another */
+.rc-stagger > * {
+  animation: rc-rise 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.rc-stagger > *:nth-child(2) { animation-delay: 60ms; }
+.rc-stagger > *:nth-child(3) { animation-delay: 120ms; }
+.rc-stagger > *:nth-child(4) { animation-delay: 180ms; }
+.rc-stagger > *:nth-child(5) { animation-delay: 240ms; }
+.rc-stagger > *:nth-child(6) { animation-delay: 300ms; }
+.rc-stagger > *:nth-child(7) { animation-delay: 360ms; }
+.rc-stagger > *:nth-child(n + 8) { animation-delay: 420ms; }
+
+/* Smooth expand/collapse using grid rows */
+.rc-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s ease;
+}
+.rc-collapse[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+.rc-collapse > * {
+  overflow: hidden;
+}
+
+/* Link-style underline that draws in on hover */
+.rc-underline {
+  background-image: linear-gradient(#0d7a5f, #0d7a5f);
+  background-size: 0% 1px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  transition: background-size 0.3s ease;
+}
+.rc-underline:hover {
+  background-size: 100% 1px;
+}
+
+/* Drawing animations for the cross-section */
+@keyframes rc-dash {
+  to { stroke-dashoffset: 0; }
+}
+
+.rc-draw {
+  stroke-dasharray: 800;
+  stroke-dashoffset: 800;
+  animation: rc-dash 1.1s ease-out forwards;
+}
+
+@keyframes rc-grow-up {
+  from { transform: scaleY(0); opacity: 0; }
+  to   { transform: scaleY(1); opacity: 1; }
+}
+
+.rc-grow-up {
+  transform-box: fill-box;
+  transform-origin: bottom center;
+  animation: rc-grow-up 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: 0.3s;
 }
 
 @media (prefers-reduced-motion: reduce) {
