@@ -194,73 +194,113 @@ Generate a single photorealistic, high-resolution architectural photograph showi
     return prompt.strip()
 
 
-SDXL_NEGATIVE_PROMPT = (
-    "cartoon, illustration, 3d render, blurry, distorted, low quality, bad architecture, deformed"
+
+# ---------------------------------------------------------------------------
+# FLUX.1 Kontext prompts
+# ---------------------------------------------------------------------------
+# Kontext follows short, concrete edit instructions far better than long briefs, and drifts
+# the architecture unless told explicitly what to keep. Keep these terse.
+
+# Detected protected-object categories (segmentation) -> what to name in the keep-list.
+# Naming concrete scene content stops Kontext from replacing the whole street, but the list must
+# stay short: a long "keep everything unchanged" clause makes Kontext skip the additions too.
+PROTECTED_PHRASES = {
+    "vehicle": "vehicles",
+    "person": "people",
+    "infrastructure": "street lamps",
+    "facade_detail": "shop signs",
+}
+MIN_PROTECTED_PCT = 0.5
+
+ZONE_PHRASES = {
+    "left_sidewalk": "the left sidewalk",
+    "right_sidewalk": "the right sidewalk",
+    "roadway": "the road",
+    "rooftop": "visible rooftops",
+}
+
+KONTEXT_INTERVENTION_PHRASES = {
+    "tree_canopy": (
+        "add a continuous row of large mature street trees with wide leafy green canopies along {zones}, "
+        "planted in tree pits at the curb and casting shade across the pavement"
+    ),
+    "cool_pavement": "resurface {zones} with light-gray cool reflective paving while keeping lane markings and curbs",
+    "permeable_pave": "repave {zones} with light-colored permeable stone pavers",
+    "cool_roof": "coat {zones} with bright white cool roofing",
+    "green_roof": "cover {zones} with green vegetated roofs",
+    "shade_structure": "add light fabric shade canopies on slender poles over {zones}",
+}
+
+DEFAULT_ZONES = {
+    "tree_canopy": "both sidewalks",
+    "cool_pavement": "the road",
+    "permeable_pave": "the sidewalks",
+    "cool_roof": "visible rooftops",
+    "green_roof": "visible rooftops",
+    "shade_structure": "the sidewalk",
+}
+
+# Architectural cooling applied to every redesign: shading and greening the facades
+# without replacing the buildings themselves.
+KONTEXT_ARCHITECTURE = (
+    "Add green climbing plants on parts of the sun-facing walls and fabric awnings over ground-floor doors."
 )
 
 
-def build_pass_sdxl_prompt(intervention_type: str, attempt: int = 0) -> str:
-    """Build a dedicated, short prompt for localized SD inpainting.
-    
-    SD 1.5 excels with short, direct prompts describing the localized element itself.
-    Strictly kept under 20 tokens to maximize CLIP fidelity.
+def _join_zones(zones: List[str]) -> str:
+    phrases = list(dict.fromkeys(ZONE_PHRASES.get(z, z.replace("_", " ")) for z in zones))
+    if {"the left sidewalk", "the right sidewalk"} <= set(phrases):
+        phrases = ["both sidewalks"] + [p for p in phrases if p not in ("the left sidewalk", "the right sidewalk")]
+    if len(phrases) <= 1:
+        return phrases[0] if phrases else ""
+    return ", ".join(phrases[:-1]) + " and " + phrases[-1]
+
+
+def _keep_list(protected_objects: Optional[dict]) -> str:
+    items = ["buildings", "shops"]
+    for category, pct in sorted((protected_objects or {}).items(), key=lambda kv: -kv[1]):
+        if pct >= MIN_PROTECTED_PCT and category in PROTECTED_PHRASES:
+            items.append(PROTECTED_PHRASES[category])
+    return ", ".join(items)
+
+
+def build_kontext_redesign_prompt(plan: SpatialDesignPlan, protected_objects: Optional[dict] = None) -> str:
+    """Build a concise FLUX.1 Kontext edit instruction from the spatial design plan.
+
+    The edit leads with concrete, emphatic additions, then a short keep-list built from what
+    segmentation detected (protected_objects: category -> % of image). Phrasing it as a
+    "redesign" makes Kontext rebuild the street as a generic one; an over-long keep-list makes
+    it change almost nothing.
     """
-    if intervention_type == "tree_canopy":
-        return "a leafy green street tree, realistic, natural light"
+    zones_by_type: dict = {}
+    for item in sorted(plan.interventions, key=lambda i: i.priority):
+        if item.type not in KONTEXT_INTERVENTION_PHRASES:
+            continue
+        zones = zones_by_type.setdefault(item.type, [])
+        if item.target_zone:
+            zones.append(item.target_zone)
 
-    elif intervention_type == "shade_structure":
-        return "modern tensile fabric shade canopy, realistic architectural structure, natural light"
+    if not zones_by_type:
+        zones_by_type = {"tree_canopy": [], "cool_pavement": []}
 
-    elif intervention_type == "cool_pavement":
-        if attempt == 0:
-            return (
-                "transform asphalt roadway into realistic light-gray solar-reflective cool pavement surface, "
-                "high albedo material, preserving painted lane markings, crosswalks, curbs, vehicles, sharp focus"
-            )
-        else:
-            return (
-                "photorealistic street transformation, bright light-gray solar-reflective road coating, "
-                "clean smooth high-albedo road surface, intact painted traffic lane lines, authentic streetscape, sharp focus"
-            )
+    clauses = []
+    for itype, zones in zones_by_type.items():
+        where = _join_zones(zones) or DEFAULT_ZONES[itype]
+        clauses.append(KONTEXT_INTERVENTION_PHRASES[itype].format(zones=where))
 
-    elif intervention_type == "permeable_pave":
-        if attempt == 0:
-            return (
-                "replace pedestrian pavement with realistic light-tone interlocking permeable concrete pavers, "
-                "modular paving stones, narrow gravel drainage joints, preserving curbs, buildings, doors, sharp focus"
-            )
-        else:
-            return (
-                "architectural street renovation, high-quality light-gray modular permeable interlocking pavers "
-                "installed across pedestrian sidewalk, distinct paving units, crisp curb edges, sharp focus"
-            )
-
-    elif intervention_type in ("cool_roof", "green_roof"):
-        if intervention_type == "green_roof":
-            return (
-                "extensive vegetative green roof on flat building rooftop, lush sedum succulent plants, "
-                "gravel drainage border, preserving rooftop parapets and building geometry, sharp focus"
-            )
-        else:
-            return (
-                "solar-reflective bright white elastomeric cool roof coating on flat rooftop, "
-                "clean high-albedo membrane, preserving parapets and building architecture, sharp focus"
-            )
-
+    edits = "; ".join(clauses)
+    edits = edits[0].upper() + edits[1:]
     return (
-        "photorealistic urban streetscape modification, high-albedo resilient urban infrastructure, "
-        "natural daylight, preserving architecture and street perspective, sharp focus"
+        f"{edits}. {KONTEXT_ARCHITECTURE} "
+        f"Keep the same {_keep_list(protected_objects)}, and the same camera angle and perspective. "
+        "Photorealistic photograph."
     )
 
 
-def build_sdxl_inpainting_prompt(plan: SpatialDesignPlan, attempt: int = 0) -> str:
-    """Composite SDXL prompt for backward compatibility."""
-    if plan.interventions:
-        # Use primary intervention prompt
-        primary = plan.interventions[0].type
-        return build_pass_sdxl_prompt(primary, attempt=attempt)
-    return "photorealistic resilient urban streetscape with mature green street trees and light-gray cool pavement"
-
-
-
-
+def build_kontext_refinement_prompt(instruction: str) -> str:
+    """Wrap a free-form user refinement so Kontext changes only what was asked."""
+    instruction = instruction.strip().rstrip(".")
+    return (
+        f"{instruction}. Keep everything else exactly the same, including the buildings, existing trees "
+        "and greenery, paving, camera angle, perspective and lighting. Photorealistic photograph."
+    )

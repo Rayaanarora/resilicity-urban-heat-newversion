@@ -1,12 +1,11 @@
 """ResiliCity backend: serves perception, spatial urban planning, thermal impact,
-and Google Gemini Generative AI urban resilience image editing.
+and FLUX.1 Kontext generative redesign of street photos for urban heat resilience.
 
 Run:  uvicorn main:app --reload --port 8000
 Docs: http://localhost:8000/docs
 """
 
 import asyncio
-import hashlib
 import io
 import json
 import os
@@ -40,19 +39,10 @@ if env_path.exists():
             os.environ.setdefault(k.strip(), v.strip())
 
 from image_generation import (
-    GeminiImageEditingProvider,
-    LocalSD15ControlNetInpaintingProvider,
-    LocalSD15InpaintingProvider,
-    LocalSDXLInpaintingProvider,
-    build_inpainting_mask,
-    build_pass_mask,
-    build_protected_object_mask,
-    build_redesign_prompt,
-    build_refinement_prompt,
-    build_sdxl_inpainting_prompt,
-    run_autonomous_multi_pass_redesign,
+    RedesignEngine,
+    build_kontext_redesign_prompt,
+    build_kontext_refinement_prompt,
     parse_refinement_intent,
-    validate_image_output,
     UnifiedRedesignResponse,
     RefinementIntent,
     RefinementResponse,
@@ -71,33 +61,12 @@ from planner import (
 from scene_understanding import analyze_scene, render_heat_priority_colormap
 from segmentation import SegFormerEngine
 
-IMAGE_PROVIDER = os.environ.get("IMAGE_PROVIDER", "local_sd15_controlnet").strip().lower()
-if IMAGE_PROVIDER in ("local_sdxl", "local_sd15"):
-    IMAGE_PROVIDER = "local_sd15_controlnet"
-
 inpainter = ResilientInpainter()
 
-# Lazy provider construction: instantiate LocalSD15ControlNetInpaintingProvider on CUDA (zero Gemini/cloud fallback)
-sd_controlnet_provider = (
-    LocalSD15ControlNetInpaintingProvider.get_instance()
-    if IMAGE_PROVIDER in ("local_sd15_controlnet", "local_sd15", "local_sdxl")
-    else None
-)
-sd15_provider = sd_controlnet_provider
-sdxl_provider = sd_controlnet_provider
-_gemini_provider: Optional[GeminiImageEditingProvider] = None
+# One edit call per redesign through the provider chain in IMAGE_PROVIDERS
+# (default: free Hugging Face Kontext Space, then fal.ai), with a persistent disk cache.
+redesign_engine = RedesignEngine()
 
-
-def get_gemini_provider() -> GeminiImageEditingProvider:
-    global _gemini_provider
-    if _gemini_provider is None:
-        _gemini_provider = GeminiImageEditingProvider()
-    return _gemini_provider
-
-
-# In-memory deterministic generation cache: key -> cached dict with visualization & real validation
-GENERATION_CACHE: Dict[str, Dict[str, Any]] = {}
-REDESIGN_CACHE: Dict[str, Dict[str, Any]] = GENERATION_CACHE
 
 DEBUG_DIR = HERE / "data" / "debug"
 DEBUG_DIR.mkdir(parents=True, exist_ok=True)
@@ -230,37 +199,17 @@ def compute_thermal_impact(surfaces: Dict[str, float], interventions: List[Dict[
     }
 
 
-def compute_cache_key(img_bytes: bytes, plan_dict: Dict[str, Any], quality_tier: str, refinement: str = "") -> str:
-    """Generate deterministic hash for caching generated designs."""
-    hasher = hashlib.sha256()
-    hasher.update(img_bytes)
-    hasher.update(json.dumps(plan_dict, sort_keys=True).encode("utf-8"))
-    hasher.update(quality_tier.encode("utf-8"))
-    hasher.update(refinement.encode("utf-8"))
-    return hasher.hexdigest()
-
-
 # ---------------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------------
 @app.get("/api/v1/health")
 def health():
     seg_info = seg_engine.get_status()
-    active_sd = sd15_provider or sdxl_provider
-    sd15_info = active_sd.get_status() if active_sd is not None else {
-        "available": False,
-        "loaded": False,
-        "model": "stable-diffusion-v1-5/stable-diffusion-inpainting",
-        "model_path": "",
-        "cuda_available": False,
-        "gpu_name": "None",
-        "vram_gb": 0.0,
-        "error": "Local SD 1.5 provider not active",
-    }
+    engine_status = redesign_engine.status()
     return {
         "ok": True,
-        "generative_provider": IMAGE_PROVIDER,
-        "local_generator": sd15_info,
+        "generative_provider": ",".join(redesign_engine.provider_names),
+        "image_generation": engine_status,
         "heat_model_available": bundle is not None and "model" in bundle,
         "segmenter_available": seg_info["available"],
         "segmenter_model": seg_info["model_name"],
@@ -284,8 +233,8 @@ async def analyze_and_redesign(
     1. Scene Analysis (SegFormer semantic perception)
     2. Autonomous Spatial Urban Design Planning (no user toggles required)
     3. Spatial Inpainting Mask Construction (pedestrian curb envelopes, roadway, roofs)
-    4. Local SD 1.5 Inpainting on NVIDIA RTX GPU
-    5. Quantitative Visual Validation (real diff_mean, pct_changed against original)
+    4. Whole-scene FLUX.1 Kontext redesign (single edit call, disk-cached)
+    5. Visual validation (output must visibly differ from the original)
     6. Estimated Microclimate Thermal Impact Computation
     """
     t0 = time.time()
@@ -323,204 +272,75 @@ async def analyze_and_redesign(
     )
     analysis = analyze_scene_heuristics(pil_img, surfaces)
 
-    # 4. Deterministic Caching with Real Validation Metrics
+    # 4. Generative redesign: one FLUX.1 Kontext edit of the whole photo, driven by the plan.
+    #    Results are cached on disk by the engine, so re-running the same photo costs nothing.
     plan_dict = plan.dict()
-    cache_key = compute_cache_key(content, plan_dict, quality_tier, refinement_prompt or "")
-    if cache_key in GENERATION_CACHE:
-        cached_entry = GENERATION_CACHE[cache_key]
-        return {
-            "scene_analysis": analysis.dict(),
-            "scene_understanding": scene.to_dict(),
-            "design_plan": plan_dict,
-            "visualization": cached_entry["visualization"],
-            "thermal_impact": cached_entry.get(
-                "thermal_impact",
-                compute_thermal_impact(surfaces, [i.dict() for i in plan.interventions]),
-            ),
-            "validation": cached_entry["validation"],
-            "design_intent": plan.design_intent.dict() if getattr(plan, "design_intent", None) else None,
-            "design_critique": plan.design_critique.dict() if getattr(plan, "design_critique", None) else None,
-        }
+    prompt = build_kontext_redesign_prompt(plan, scene.to_dict().get("protected_objects_summary"))
+    if refinement_prompt:
+        prompt = f"{prompt} Additionally: {refinement_prompt.strip()}"
 
-    # 5. Generative Redesign via Autonomous Multi-Pass SD 1.5 Inpainting (Part 18, 19, 20)
-    provider_name = IMAGE_PROVIDER
-    edited_img = None
-    gen_error = None
-    report = None
-    normalized_img = None
-    model_name = "stable-diffusion-v1-5/stable-diffusion-inpainting"
-
-    if IMAGE_PROVIDER in ("local_sd15_controlnet", "local_sd15", "local_sdxl"):
-        active_sd = sd_controlnet_provider or LocalSD15ControlNetInpaintingProvider.get_instance()
-
-        try:
-            logger.info("Starting local redesign generation attempt 1 on %s", active_sd.gpu_name)
-            edited_img, report, multi_pass_meta = await run_autonomous_multi_pass_redesign(
-                image=pil_img,
-                plan=plan,
-                seg_result=seg_res,
-                sdxl=active_sd,
-                scene_understanding=scene,
-                quality_tier=quality_tier,
-                save_debug=True,
-                debug_dir=DEBUG_DIR,
-                base_seed=42,
-            )
-            normalized_img = edited_img
-            if report is not None and not report.is_valid:
-                gen_error = f"Validation rejected attempt 1: {', '.join(report.warnings)}"
-        except Exception as e:
-            logger.error("Multi-pass redesign error attempt 1: %s", e, exc_info=True)
-            gen_error = str(e)
-            edited_img = None
-            import gc, torch
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-        # Retry local generation if attempt 1 failed or was rejected by validation
-        if edited_img is None or report is None or not report.is_valid:
-            logger.warning("Local SD generation attempt 1 unsuccessful (%s). Retrying local generation (attempt 2)...", gen_error)
-            import gc, torch
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            try:
-                edited_img, report, multi_pass_meta = await run_autonomous_multi_pass_redesign(
-                    image=pil_img,
-                    plan=plan,
-                    seg_result=seg_res,
-                    sdxl=active_sd,
-                    scene_understanding=scene,
-                    quality_tier=quality_tier,
-                    save_debug=True,
-                    debug_dir=DEBUG_DIR,
-                    base_seed=1042,
-                )
-                normalized_img = edited_img
-                if report is not None and not report.is_valid:
-                    gen_error = f"Validation rejected retry: {', '.join(report.warnings)}"
-                else:
-                    gen_error = None
-            except Exception as e:
-                logger.error("Multi-pass redesign error on retry attempt 2: %s", e, exc_info=True)
-                gen_error = f"Local generation retry error: {e}"
-                edited_img = None
-                import gc, torch
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-
-        if edited_img is None or report is None or not report.is_valid:
-            logger.error("Local SD generation failed after retry: %s. Returning generation unavailable (zero silent fallback).", gen_error)
-
-    elif IMAGE_PROVIDER == "gemini":
-        # Gemini is explicitly selected as provider
-        provider_name = "gemini"
-        gemini_prov = get_gemini_provider()
-        base_prompt = build_redesign_prompt(plan)
-        final_prompt = build_refinement_prompt(base_prompt, refinement_prompt) if refinement_prompt else base_prompt
-        model_name = gemini_prov.get_model_for_tier(quality_tier)
-        mask_img, mask_meta = build_inpainting_mask(pil_img, seg_res, plan.interventions, save_debug=True, debug_dir=DEBUG_DIR)
-        edited_img, gen_error = await gemini_prov.edit(
-            pil_img,
-            prompt=final_prompt,
-            model_name=model_name,
-            quality_tier=quality_tier,
-        )
-        if edited_img is not None:
-            _, report, normalized_img = validate_image_output(edited_img, pil_img.size, orig_img=pil_img, mask_img=mask_img)
-
+    result = await redesign_engine.generate(pil_img, content, prompt, quality_tier=quality_tier)
     elapsed_ms = int((time.time() - t0) * 1000)
     thermal = compute_thermal_impact(surfaces, [i.dict() for i in plan.interventions])
 
-    # 6. Part V: Full Development & Debug Artifact Bundle Export
+    # 5. Debug artifact bundle
     try:
         pil_img.save(DEBUG_DIR / "original.png")
         save_segmentation_visualization(pil_img, seg_res, DEBUG_DIR / "segmentation.png")
-        if scene.depth_map is not None:
-            Image.fromarray((scene.depth_map * 255.0).astype(np.uint8)).save(DEBUG_DIR / "depth.png")
-        if scene.protected_mask is not None:
-            Image.fromarray((scene.protected_mask.astype(np.uint8) * 255)).save(DEBUG_DIR / "protected_objects.png")
         if scene.heat_priority_map is not None:
             render_heat_priority_colormap(scene.heat_priority_map).save(DEBUG_DIR / "spatial_heat_priority.png")
-        if scene.left_sidewalk_mask is not None:
-            Image.fromarray((scene.left_sidewalk_mask.astype(np.uint8) * 255)).save(DEBUG_DIR / "left_sidewalk_mask.png")
-        if scene.right_sidewalk_mask is not None:
-            Image.fromarray((scene.right_sidewalk_mask.astype(np.uint8) * 255)).save(DEBUG_DIR / "right_sidewalk_mask.png")
-        if scene.road_mask is not None:
-            Image.fromarray((scene.road_mask.astype(np.uint8) * 255)).save(DEBUG_DIR / "road_mask.png")
-        if edited_img is not None:
-            edited_img.save(DEBUG_DIR / "final_redesign.png")
-
+        if result.image is not None:
+            result.image.save(DEBUG_DIR / "final_redesign.png")
+        (DEBUG_DIR / "redesign_prompt.txt").write_text(prompt, encoding="utf-8")
         (DEBUG_DIR / "scene_understanding.json").write_text(json.dumps(scene.to_dict(), indent=2), encoding="utf-8")
         (DEBUG_DIR / "design_plan.json").write_text(json.dumps(plan_dict, indent=2), encoding="utf-8")
-        if report is not None:
-            (DEBUG_DIR / "validation.json").write_text(json.dumps(report.dict(), indent=2), encoding="utf-8")
-        logger.info("Exported complete debug suite to %s", DEBUG_DIR)
     except Exception as e:
         logger.warning("Could not export debug artifacts: %s", e)
 
-    if edited_img is not None and normalized_img is not None and report is not None and report.is_valid:
-        data_url = encode_image_to_base64(normalized_img, quality=92)
-        nw, nh = normalized_img.size
-
+    if result.image is not None:
         vis_output = {
             "status": "ready",
-            "image_url": data_url,
-            "width": nw,
-            "height": nh,
-            "provider": provider_name,
-            "model": model_name,
+            "cached": result.cached,
+            "image_url": encode_image_to_base64(result.image, quality=92),
+            "width": result.image.width,
+            "height": result.image.height,
+            "provider": result.provider,
+            "model": result.model,
             "quality_tier": quality_tier,
             "generation_time_ms": elapsed_ms,
             "refinement_count": 0,
             "error_message": None,
         }
-        cache_entry = {
-            "visualization": vis_output,
-            "validation": report.dict(),
-            "thermal_impact": thermal,
+        validation = result.validation.dict() if result.validation else {
+            "is_valid": True,
+            "aspect_ratio_preserved": True,
+            "dimensions_valid": True,
+            "non_blank_verified": True,
+            "checks_passed": ["Served from redesign cache"],
+            "warnings": [],
         }
-        GENERATION_CACHE[cache_key] = cache_entry
-
-        plan_dict = plan.dict()
-        critique_obj = None
-        if "multi_pass_meta" in locals() and multi_pass_meta and multi_pass_meta.get("design_critique"):
-            critique_obj = multi_pass_meta.get("design_critique")
-        elif getattr(plan, "design_critique", None):
-            critique_obj = plan.design_critique.dict()
-
-        return {
-            "scene_analysis": analysis.dict(),
-            "scene_understanding": scene.to_dict(),
-            "design_plan": plan_dict,
-            "visualization": vis_output,
-            "thermal_impact": thermal,
-            "validation": report.dict(),
-            "design_intent": plan.design_intent.dict() if getattr(plan, "design_intent", None) else None,
-            "design_critique": critique_obj,
+    else:
+        logger.error("Redesign generation failed: %s", result.error)
+        vis_output = {
+            "status": "unavailable",
+            "image_url": None,
+            "width": pil_img.width,
+            "height": pil_img.height,
+            "provider": result.provider,
+            "model": result.model,
+            "quality_tier": quality_tier,
+            "generation_time_ms": elapsed_ms,
+            "refinement_count": 0,
+            "error_message": result.error or "Image generation failed.",
         }
-
-    # If generation failed or was rejected by validation after all attempts (never fake result!)
-    vis_output = {
-        "status": "unavailable",
-        "image_url": None,
-        "width": pil_img.width,
-        "height": pil_img.height,
-        "provider": provider_name,
-        "model": model_name,
-        "quality_tier": quality_tier,
-        "generation_time_ms": elapsed_ms,
-        "refinement_count": 0,
-        "error_message": gen_error or "Autonomous image generation rejected by validation.",
-    }
-    plan_dict = plan.dict()
-    critique_obj = None
-    if "multi_pass_meta" in locals() and multi_pass_meta and multi_pass_meta.get("design_critique"):
-        critique_obj = multi_pass_meta.get("design_critique")
-    elif getattr(plan, "design_critique", None):
-        critique_obj = plan.design_critique.dict()
+        validation = {
+            "is_valid": False,
+            "aspect_ratio_preserved": True,
+            "dimensions_valid": False,
+            "non_blank_verified": False,
+            "checks_passed": [],
+            "warnings": [result.error or "Image generation failed"],
+        }
 
     return {
         "scene_analysis": analysis.dict(),
@@ -528,16 +348,9 @@ async def analyze_and_redesign(
         "design_plan": plan_dict,
         "visualization": vis_output,
         "thermal_impact": thermal,
-        "validation": report.dict() if report else {
-            "is_valid": False,
-            "aspect_ratio_preserved": True,
-            "dimensions_valid": False,
-            "non_blank_verified": False,
-            "checks_passed": [],
-            "warnings": [gen_error or "Image generation failed"],
-        },
+        "validation": validation,
         "design_intent": plan.design_intent.dict() if getattr(plan, "design_intent", None) else None,
-        "design_critique": critique_obj,
+        "design_critique": plan.design_critique.dict() if getattr(plan, "design_critique", None) else None,
     }
 
 
@@ -553,8 +366,8 @@ async def refine_design(
     """Refine a previously generated redesign with open-ended natural language guidance.
     
     Transforms the current generated design according to the user's arbitrary instruction,
-    interprets structured intent, and executes Gemini multimodal image editing while
-    strictly preserving architectural identity and camera perspective.
+    interprets structured intent, and applies a FLUX.1 Kontext edit that changes only
+    what was asked while preserving architectural identity and camera perspective.
     """
     t0 = time.time()
     instr_text = (instruction or refinement_prompt or "").strip()
@@ -567,68 +380,32 @@ async def refine_design(
     except Exception as e:
         raise HTTPException(400, f"Invalid image: {e}")
 
-    gemini_prov = get_gemini_provider()
-    model_name = gemini_prov.get_model_for_tier(quality_tier)
-
-    # 1. Deterministic cache check
-    img_hash = hashlib.sha256(content).hexdigest()[:16]
-    instr_hash = hashlib.sha256(instr_text.lower().encode("utf-8")).hexdigest()[:16]
-    refine_cache_key = f"refine_{img_hash}_{instr_hash}_{model_name}"
-
-    if refine_cache_key in REDESIGN_CACHE:
-        cached = REDESIGN_CACHE[refine_cache_key]
-        return cached
-
-    # 2. Extract structured design intent (goal, additions, removals, modifications, preservations)
+    # Structured intent is returned to the UI; the edit itself is a short Kontext instruction.
     intent = parse_refinement_intent(instr_text, context=context)
-
-    # 3. Build spatially constrained refinement prompt
-    prompt = build_refinement_prompt(instr_text, intent=intent, context=context)
-
-    # 4. Execute multimodal image editing with Gemini
-    edited_img, gen_error = await gemini_prov.edit(
-        pil_img,
-        prompt=prompt,
-        model_name=model_name,
-        quality_tier=quality_tier,
-    )
-
-    elapsed_ms = int((time.time() - t0) * 1000)
     intent_dict = intent.dict() if hasattr(intent, "dict") else intent.model_dump()
+    prompt = build_kontext_refinement_prompt(instr_text)
 
-    if edited_img is not None:
-        _, report, norm_img = validate_image_output(edited_img, pil_img.size)
-        data_url = encode_image_to_base64(norm_img, quality=92)
-        response_data = {
-            "status": "ready",
-            "image_url": data_url,
-            "width": norm_img.width,
-            "height": norm_img.height,
-            "instruction": instr_text,
-            "provider": "gemini",
-            "model": model_name,
-            "quality_tier": quality_tier,
-            "generation_time_ms": elapsed_ms,
-            "intent": intent_dict,
-            "error_message": None,
-        }
-        REDESIGN_CACHE[refine_cache_key] = response_data
-        return response_data
-    else:
-        # Graceful return with unavailable status so the frontend retains the current valid image
-        return {
-            "status": "unavailable",
-            "image_url": None,
-            "width": pil_img.width,
-            "height": pil_img.height,
-            "instruction": instr_text,
-            "provider": "gemini",
-            "model": model_name,
-            "quality_tier": quality_tier,
-            "generation_time_ms": elapsed_ms,
-            "intent": intent_dict,
-            "error_message": gen_error or "Refinement generation unavailable.",
-        }
+    result = await redesign_engine.generate(
+        pil_img, content, prompt, quality_tier=quality_tier, require_visible_change=False
+    )
+    elapsed_ms = int((time.time() - t0) * 1000)
+
+    response_data = {
+        "status": "ready" if result.image is not None else "unavailable",
+        "cached": result.cached,
+        "image_url": encode_image_to_base64(result.image, quality=92) if result.image is not None else None,
+        "width": result.image.width if result.image is not None else pil_img.width,
+        "height": result.image.height if result.image is not None else pil_img.height,
+        "instruction": instr_text,
+        "provider": result.provider,
+        "model": result.model,
+        "quality_tier": quality_tier,
+        "generation_time_ms": elapsed_ms,
+        "intent": intent_dict,
+        # On failure the frontend keeps showing the current image.
+        "error_message": None if result.image is not None else (result.error or "Refinement generation unavailable."),
+    }
+    return response_data
 
 
 # ---------------------------------------------------------------------------

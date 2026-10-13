@@ -1243,12 +1243,7 @@ def generate_spatial_plan(
         )
         final_specs.append(spec)
 
-    # Step 10: Populate Explicit Geometry for Renderer
-    from image_generation.layout_engine import populate_intervention_explicit_geometry
-    for spec in final_specs:
-        populate_intervention_explicit_geometry(spec, image, seg_result, scene, design_intent=design_intent)
-
-    # Step 11: Build Constraints & Design Narrative
+    # Step 10: Build Constraints & Design Narrative
     constraints = list(scene.design_constraints)
     if surfaces.get("roof", 0.0) < 3.0 and not any("rooftop" in c.lower() for c in constraints):
         constraints.append("No visible rooftops detected from street viewpoint; rooftop measures omitted.")

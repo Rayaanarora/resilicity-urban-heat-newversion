@@ -16,6 +16,13 @@ Terminal 2, front end:
 Open the http://localhost:5173 link.
 
 Check: http://localhost:8000/api/v1/health should show "ok": true and "segmenter_available": true.
+
+Image generation (street redesign): copy backend/.env.example to backend/.env. By default the backend
+redesigns photos with FLUX.1 Kontext on the free Hugging Face Space (about 30 s per image, no key needed).
+- HF_TOKEN (free, huggingface.co/settings/tokens) raises the daily free GPU quota.
+- FAL_KEY (fal.ai, a few cents per image) is used only as a fallback when the free Space fails.
+- Every result is cached in REDESIGN_CACHE_DIR, so the same photo never costs a second call.
+- REDESIGN_OFFLINE=1 serves cached results only: use it while working on the UI.
 Click "Export notes" in the app to see the model-based temperature line and export PDF/JSON.
 Note: uploaded photos now run live SegFormer semantic segmentation with real polygon overlays.
 

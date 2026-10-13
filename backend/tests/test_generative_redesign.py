@@ -1,5 +1,6 @@
-"""Tests for Generative AI urban redesign pipeline, validation, and Gemini provider."""
+"""Tests for the generative redesign pipeline: planner, prompts, Kontext engine, caching and API."""
 
+import asyncio
 import io
 import json
 import os
@@ -13,7 +14,10 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from image_generation import (
-    GeminiImageEditingProvider,
+    HuggingFaceSpaceKontextProvider,
+    RedesignEngine,
+    build_kontext_redesign_prompt,
+    build_kontext_refinement_prompt,
     build_redesign_prompt,
     build_refinement_prompt,
     validate_image_output,
@@ -21,12 +25,16 @@ from image_generation import (
     SpatialInterventionSpec,
 )
 from image_generation.schemas import DesignProfile
-from main import app, compute_cache_key, compute_thermal_impact
+import main
+from main import app, compute_thermal_impact
 from planner import generate_spatial_plan, analyze_scene_heuristics
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch, tmp_path):
+    # Isolated engine: only the HF Space provider (mocked per test) and a throwaway cache.
+    monkeypatch.delenv("REDESIGN_OFFLINE", raising=False)
+    monkeypatch.setattr(main, "redesign_engine", RedesignEngine(["hf_space"], cache_dir=str(tmp_path)))
     return TestClient(app)
 
 
@@ -135,22 +143,80 @@ def test_prompt_builder_enforces_identity_and_interventions():
     assert "Preserve facade" in prompt
 
 
+def test_kontext_prompt_preserves_architecture_and_lists_zones():
+    specs = [
+        SpatialInterventionSpec(type="tree_canopy", target_region="pavement", target_zone="left_sidewalk",
+                                priority=1, coverage=0.4, placement="curb", visual_design="trees", reason="shade"),
+        SpatialInterventionSpec(type="tree_canopy", target_region="pavement", target_zone="right_sidewalk",
+                                priority=2, coverage=0.4, placement="curb", visual_design="trees", reason="shade"),
+        SpatialInterventionSpec(type="cool_pavement", target_region="road", target_zone="roadway",
+                                priority=3, coverage=0.6, placement="road", visual_design="cool", reason="albedo"),
+    ]
+    plan = SpatialDesignPlan(site_summary="s", heat_drivers=[], constraints=[], design_profile="balanced",
+                             interventions=specs, overall_design_intent="cool it")
+    prompt = build_kontext_redesign_prompt(plan, {"vehicle": 12.0, "person": 0.2})
+    assert prompt.startswith("Add a continuous row of large mature street trees")
+    assert "Keep the same buildings, shops, vehicles" in prompt
+    assert "people" not in prompt  # below the detection threshold
+    assert "street trees" in prompt and "both sidewalks" in prompt
+    assert "cool reflective paving" in prompt and "the road" in prompt
+    assert prompt.count("street trees") == 1  # tree zones merged into one clause
+
+
+def test_kontext_refinement_prompt_keeps_rest_of_scene():
+    prompt = build_kontext_refinement_prompt("Add a fountain in the plaza.")
+    assert prompt.startswith("Add a fountain in the plaza.")
+    assert "Keep everything else exactly the same" in prompt
+
+
+def _noisy(w=300, h=200, seed=0):
+    import numpy as np
+    return Image.fromarray(np.random.default_rng(seed).integers(40, 220, (h, w, 3), dtype=np.uint8))
+
+
+def test_engine_disk_cache_avoids_second_provider_call(tmp_path):
+    engine = RedesignEngine(["hf_space"], cache_dir=str(tmp_path))
+    src, out = _noisy(seed=1), _noisy(seed=2)
+    mock_edit = AsyncMock(return_value=(out, None))
+    with patch.object(HuggingFaceSpaceKontextProvider, "edit", new=mock_edit):
+        first = asyncio.run(engine.generate(src, b"img-bytes", "prompt"))
+        # A fresh engine on the same directory simulates a backend restart.
+        second = asyncio.run(RedesignEngine(["hf_space"], cache_dir=str(tmp_path)).generate(src, b"img-bytes", "prompt"))
+    assert first.image is not None and not first.cached
+    assert second.cached and second.image.size == src.size
+    assert mock_edit.call_count == 1
+
+
+def test_engine_offline_mode_never_calls_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("REDESIGN_OFFLINE", "1")
+    engine = RedesignEngine(["hf_space"], cache_dir=str(tmp_path))
+    mock_edit = AsyncMock(return_value=(_noisy(seed=3), None))
+    with patch.object(HuggingFaceSpaceKontextProvider, "edit", new=mock_edit):
+        res = asyncio.run(engine.generate(_noisy(seed=4), b"other", "prompt"))
+    assert res.image is None and "Offline mode" in res.error
+    assert mock_edit.call_count == 0
+
+
+def test_engine_falls_back_to_next_provider(tmp_path, monkeypatch):
+    from image_generation import FalKontextProvider
+    monkeypatch.setenv("FAL_KEY", "test-key")
+    engine = RedesignEngine(["hf_space", "fal"], cache_dir=str(tmp_path))
+    with patch.object(HuggingFaceSpaceKontextProvider, "edit", new=AsyncMock(return_value=(None, "quota reached"))),          patch.object(FalKontextProvider, "edit", new=AsyncMock(return_value=(_noisy(seed=5), None))):
+        res = asyncio.run(engine.generate(_noisy(seed=6), b"fallback", "prompt"))
+    assert res.image is not None and res.provider == "fal"
+
+
+def test_engine_rejects_unchanged_output(tmp_path):
+    engine = RedesignEngine(["hf_space"], cache_dir=str(tmp_path))
+    src = _noisy(seed=7)
+    with patch.object(HuggingFaceSpaceKontextProvider, "edit", new=AsyncMock(return_value=(src.copy(), None))):
+        res = asyncio.run(engine.generate(src, b"same", "prompt"))
+    assert res.image is None and "rejected" in res.error
+
+
 # ---------------------------------------------------------------------------
 # Caching & Thermal Separation Tests
 # ---------------------------------------------------------------------------
-def test_deterministic_cache_key():
-    img1 = b"image_data_one"
-    img2 = b"image_data_two"
-    plan_dict = {"interventions": [{"type": "tree_canopy"}]}
-
-    k1 = compute_cache_key(img1, plan_dict, "fast")
-    k2 = compute_cache_key(img1, plan_dict, "fast")
-    k3 = compute_cache_key(img2, plan_dict, "fast")
-
-    assert k1 == k2
-    assert k1 != k3
-
-
 def test_thermal_impact_calculation():
     surfaces = {"road": 40.0, "wall": 20.0, "pavement": 20.0, "vegetation": 5.0, "roof": 5.0}
     interventions = [
@@ -179,17 +245,16 @@ def test_health_endpoint_never_leaks_api_key(client):
 
 
 # ---------------------------------------------------------------------------
-# End-to-End API Redesign Tests with Mocked Gemini Provider
+# End-to-End API Redesign Tests with Mocked Kontext Provider
 # ---------------------------------------------------------------------------
-def test_analyze_and_redesign_with_mock_gemini(client, monkeypatch):
-    monkeypatch.setattr("main.IMAGE_PROVIDER", "gemini")
+def test_analyze_and_redesign_with_mock_kontext(client, monkeypatch):
     fake_img = Image.new("RGB", (300, 200), color=(100, 120, 140))
     import numpy as np
     arr = np.random.randint(50, 220, (200, 300, 3), dtype=np.uint8)
     fake_generated = Image.fromarray(arr)
 
     with patch.object(
-        GeminiImageEditingProvider,
+        HuggingFaceSpaceKontextProvider,
         "edit",
         new=AsyncMock(return_value=(fake_generated, None)),
     ):
@@ -210,11 +275,10 @@ def test_analyze_and_redesign_with_mock_gemini(client, monkeypatch):
 
 
 def test_analyze_and_redesign_handles_provider_failure_gracefully(client, monkeypatch):
-    monkeypatch.setattr("main.IMAGE_PROVIDER", "gemini")
     with patch.object(
-        GeminiImageEditingProvider,
+        HuggingFaceSpaceKontextProvider,
         "edit",
-        new=AsyncMock(return_value=(None, "Gemini API quota exceeded for image generation.")),
+        new=AsyncMock(return_value=(None, "Hugging Face Space GPU quota exceeded.")),
     ):
         file_bytes = make_test_image(300, 200)
         res = client.post(
@@ -276,7 +340,7 @@ def test_refine_design_endpoint_success_and_caching(client):
     fake_img = Image.fromarray(np.random.randint(60, 200, (200, 300, 3), dtype=np.uint8))
     mock_edit = AsyncMock(return_value=(fake_img, None))
 
-    with patch.object(GeminiImageEditingProvider, "edit", new=mock_edit):
+    with patch.object(HuggingFaceSpaceKontextProvider, "edit", new=mock_edit):
         file_bytes = make_test_image(300, 200)
         res = client.post(
             "/api/v1/refine-design",
@@ -303,9 +367,9 @@ def test_refine_design_endpoint_success_and_caching(client):
 
 def test_refine_design_endpoint_handles_failure_gracefully(client):
     with patch.object(
-        GeminiImageEditingProvider,
+        HuggingFaceSpaceKontextProvider,
         "edit",
-        new=AsyncMock(return_value=(None, "Gemini quota exhausted")),
+        new=AsyncMock(return_value=(None, "Hugging Face Space GPU quota exhausted")),
     ):
         file_bytes = make_test_image(300, 200)
         res = client.post(

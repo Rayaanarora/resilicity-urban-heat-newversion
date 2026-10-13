@@ -71,4 +71,5 @@ debug_*.png
 *.env
 *.env.local
 *.env.*
+!.env.example
 
