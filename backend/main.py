@@ -62,6 +62,7 @@ from planner import (
     planner_available,
     router as planner_router,
 )
+from hotspots import router as hotspots_router
 from scene_understanding import analyze_scene, render_heat_priority_colormap
 from segmentation import SegFormerEngine
 
@@ -133,6 +134,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(planner_router)
+app.include_router(hotspots_router)
 
 APP_TO_WC = {"road": "built", "roof": "built", "pavement": "built", "wall": "built", "water": "water"}
 
