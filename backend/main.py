@@ -14,12 +14,10 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import joblib
 import logging
 import random
 import numpy as np
 import pandas as pd
-import sklearn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
@@ -54,15 +52,25 @@ from image_generation import (
     ValidationReport,
 )
 from inpainting import ResilientInpainter, encode_image_to_base64
-from buildable import cooling_band, land_cover_shift
-from buildable.config import THERMAL
+from legacy_heat import (  # noqa: F401  (re-exported: tests and clients import these from main)
+    FRAC,
+    RANGES,
+    bundle,
+    card,
+    compute_thermal_impact,
+    model,
+    predict,
+    to_fractions,
+)
 from planner import (
     generate_spatial_plan,
     analyze_scene_heuristics,
     planner_available,
     router as planner_router,
 )
+from analysis_service import run_site_analysis
 from hotspots import router as hotspots_router
+from projects import router as projects_router
 from scene_understanding import analyze_scene, render_heat_priority_colormap
 from segmentation import SegFormerEngine
 
@@ -111,17 +119,6 @@ def save_segmentation_visualization(image: Image.Image, seg_result: Dict[str, An
 
 
 
-bundle = joblib.load(HERE / "heat_model.joblib")
-model, FRAC = bundle["model"], bundle["features"]
-card = json.loads((HERE / "model_card.json").read_text())
-RANGES = card.get("range")
-
-_built_with = card.get("sklearn_version")
-if getattr(model, "monotonic_cst", None) is None:
-    warnings.warn("heat_model.joblib has no monotonic constraints; run `python retrain.py`.")
-if _built_with and _built_with != sklearn.__version__:
-    warnings.warn(f"heat_model.joblib built with {_built_with}, running {sklearn.__version__}.")
-
 # Initialize SegFormer singleton
 seg_engine = SegFormerEngine.get_instance()
 
@@ -135,95 +132,7 @@ app.add_middleware(
 )
 app.include_router(planner_router)
 app.include_router(hotspots_router)
-
-APP_TO_WC = {"road": "built", "roof": "built", "pavement": "built", "wall": "built", "water": "water"}
-
-
-def to_fractions(app_percent: dict[str, float], tree_share: float = 0.5) -> dict[str, float]:
-    f = {c: 0.0 for c in FRAC}
-    for k, pct in app_percent.items():
-        if k == "vegetation":
-            f["f_tree"] += pct / 100 * tree_share
-            f["f_grass"] += pct / 100 * (1 - tree_share)
-        elif k in APP_TO_WC:
-            f["f_" + APP_TO_WC[k]] += pct / 100
-    s = sum(f.values())
-    if s <= 0:
-        raise HTTPException(422, "surfaces must contain at least one known class")
-    return {k: v / s for k, v in f.items()}
-
-
-def predict(f: dict[str, float]) -> float:
-    return float(model.predict(pd.DataFrame([f])[FRAC])[0])
-
-
-def compute_thermal_impact(surfaces: Dict[str, float], interventions: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Indicative microclimate cooling with confidence bands.
-
-    Per-type coefficients and land-cover shifts come from buildable/config.py. Types without a
-    coefficient are listed in unmodelledInterventions instead of silently counting as zero.
-    """
-    total_cooling_est = 0.0
-    cooling_lo = cooling_hi = 0.0
-    shifts = {"f_built": 0.0, "f_tree": 0.0, "f_grass": 0.0}
-    per_item: List[Dict[str, Any]] = []
-    unmodelled: List[str] = []
-
-    for item in interventions:
-        itype = item.get("type", "")
-        cov = float(item.get("coverage", 0.5))
-        band = cooling_band(itype, cov)
-        if band is None:
-            unmodelled.append(itype)
-            continue
-        lo, mid, hi = band
-        total_cooling_est += mid
-        cooling_lo += lo
-        cooling_hi += hi
-        per_item.append({"type": itype, "coolingC": mid, "rangeC": [lo, hi]})
-        for k, v in land_cover_shift(itype, cov).items():
-            shifts[k] = shifts.get(k, 0.0) + v
-
-    # Machine learning land surface temperature model prediction
-    try:
-        before = to_fractions(surfaces)
-        after = {k: max(0.0, before[k] + shifts.get(k, 0.0)) for k in FRAC}
-        s = sum(after.values())
-        after = {k: v / s for k, v in after.items()}
-        p0, p1 = predict(before), predict(after)
-        ml_delta = p1 - p0
-    except Exception:
-        p0 = THERMAL["fallback_baseline_c"]
-        p1, ml_delta = p0 - total_cooling_est, -total_cooling_est
-
-    rmse = float(card["spatial_cv"]["RMSE"]) if card else None
-    r2 = float(card["spatial_cv"]["R2"]) if card else None
-    result = {
-        "baselineSurfaceTempC": round(p0, 1),
-        "projectedSurfaceTempC": round(p0 - total_cooling_est, 1),
-        "totalCoolingReductionC": round(total_cooling_est, 1),
-        "mlModelDeltaC": round(ml_delta, 2),
-        "methodology": "Dual-layer: Physical empirical microclimate calculations coupled with Landsat 8/9 LST regression.",
-        "disclaimer": "AI image visualization illustrates architectural cooling intent; physical cooling figures are computed via thermodynamic and empirical models.",
-        # Confidence bands (optional, newer clients)
-        "coolingRangeC": [round(cooling_lo, 1), round(cooling_hi, 1)],
-        "perIntervention": per_item,
-        "unmodelledInterventions": unmodelled,
-        "mlModelR2": round(r2, 2) if r2 is not None else None,
-        "mlModelRmseC": round(rmse, 2) if rmse is not None else None,
-        "mlModelDeltaRangeC": [round(ml_delta - rmse, 2), round(ml_delta + rmse, 2)] if rmse is not None else None,
-        "confidence": "low",
-        "confidenceNote": (
-            f"Indicative only: the land-surface-temperature regression has spatial-CV R2 {r2:.2f} "
-            f"(RMSE {rmse:.1f} C), and per-type cooling coefficients are literature-based ranges "
-            "summed without interaction effects." if r2 is not None else
-            "Indicative only: per-type cooling coefficients are literature-based ranges."
-        ),
-    }
-    if unmodelled:
-        result["warning"] = f"No cooling coefficient for: {', '.join(unmodelled)}; excluded from totals."
-    return result
-
+app.include_router(projects_router)
 
 # ---------------------------------------------------------------------------
 # API Endpoints
@@ -277,32 +186,9 @@ async def analyze_and_redesign(
     except Exception as e:
         raise HTTPException(400, f"Invalid image file: {e}")
 
-    # 1. Perception Layer (SegFormer with Protected Objects)
-    surfaces: Dict[str, float] = {}
-    seg_res = {}
-    try:
-        seg_res = seg_engine.segment_image(pil_img)
-        seg_engine.offload_to_cpu()
-        for m in seg_res.get("masks", []):
-            surfaces[m["className"]] = m["areaPercentage"]
-    except Exception as e:
-        warnings.warn(f"Segmentation perception fallback: {e}")
-        surfaces = {"road": 35.0, "wall": 25.0, "pavement": 15.0, "vegetation": 5.0, "roof": 0.0}
-
-    # 2. Deep Spatial Scene Understanding
-    scene = analyze_scene(pil_img, seg_res)
-
-    # 3. Autonomous Spatial Urban Design Planner (Part G, H, I, T)
-    plan = generate_spatial_plan(
-        pil_img,
-        surfaces,
-        seg_result=seg_res,
-        design_profile=design_profile,  # type: ignore
-        road_width_m=road_width_m,
-        climate_zone=climate_zone,
-        budget_lakh=budget_lakh,
-    )
-    analysis = analyze_scene_heuristics(pil_img, surfaces)
+    # 1-3. Segmentation, scene understanding and the gated plan (shared with project creation)
+    site = run_site_analysis(pil_img, design_profile, road_width_m, climate_zone, budget_lakh)
+    surfaces, seg_res, scene, plan, analysis = site.surfaces, site.seg_result, site.scene, site.plan, site.analysis
 
     # 4. Generative redesign: one FLUX.1 Kontext edit of the whole photo, driven by the plan.
     #    Results are cached on disk by the engine, so re-running the same photo costs nothing.
@@ -320,7 +206,7 @@ async def analyze_and_redesign(
             error="No buildable interventions were selected for this street; see the rejected candidates for reasons.",
         )
     elapsed_ms = int((time.time() - t0) * 1000)
-    thermal = compute_thermal_impact(surfaces, [i.dict() for i in plan.interventions])
+    thermal = site.thermal
 
     # 5. Debug artifact bundle
     try:
