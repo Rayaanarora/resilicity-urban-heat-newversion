@@ -25,7 +25,8 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. The dev server proxies `/api` to `http://localhost:8000`.
+Open `http://localhost:5173` (starts on the Map). The dev server proxies `/api` to `http://localhost:8000`.
+Add `?motion=off` to the URL to turn animations off, e.g. on a projector.
 
 ## Image generation
 
@@ -38,15 +39,25 @@ Open `http://localhost:5173`. The dev server proxies `/api` to `http://localhost
 
 The planner, measurements and implementation plan work without any key; only the illustrative image needs a provider.
 
+## Data and storage
+
+- Projects are stored in `backend/data/projects.sqlite3` with photos under `backend/data/projects/` (override with
+  `PROJECTS_DB`).
+- Without `data/chennai_grid.parquet` the map, projects and optimiser run in **demo mode** on the sample points; the UI
+  says so. To export the real 250 m grid with population, follow `data/README.md` (Earth Engine, your own account).
+
 ## Tests
 
 ```powershell
+backend\.venv\Scripts\activate
 python -m pytest backend/tests
 cd gen-ai; npm run build; npm run lint
 ```
 
-## Heat model
+## Heat models
 
-The shipped land-cover regression (`heat_model.joblib`, spatial-CV R² 0.258, RMSE 2.475 °C) can be retrained from
-`resilicity_samples.csv` with `python retrain.py resilicity_samples.csv` in `backend/` (it refuses to save a model in
-which greening warms the site). Pin `scikit-learn` in `requirements.txt` to the version it prints.
+- Site heat model (hotspots): `python -m site_model.train` in `backend/` retrains it from `resilicity_samples.csv`
+  (or `--csv ../data/chennai_grid.csv`) and rewrites `site_model.joblib` and `site_model_card.json`.
+- Legacy land-cover regression (`heat_model.joblib`, spatial-CV R² 0.258, RMSE 2.475 °C): retrain with
+  `python retrain.py resilicity_samples.csv` in `backend/` (it refuses to save a model in which greening warms the
+  site). `scikit-learn` is pinned in `requirements.txt` to the version the models were trained with.

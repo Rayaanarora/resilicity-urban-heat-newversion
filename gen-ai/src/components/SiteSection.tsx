@@ -4,6 +4,7 @@ import { useResiliCityStore } from '../store/useResiliCityStore';
 import { SAMPLE_SCENES } from '../services/sampleData';
 import { exposureLabel } from '../services/heatCalculator';
 import { AnimatedNumber } from './AnimatedNumber';
+import { SourceChip } from './Figure';
 import { Button, Panel, SectionHeading, Stat, Switch, Tag } from './ui';
 import { framedAspect, sentenceCase } from './format';
 
@@ -198,7 +199,7 @@ const BaselineRisk: React.FC = () => {
   const { heatMetrics } = useResiliCityStore();
   const pct = Math.min(100, (heatMetrics.baseScore / 10) * 100);
   return (
-    <Panel eyebrow="Baseline heat risk" title="Before any intervention" actions={<Tag tone="amber">Estimate</Tag>}>
+    <Panel eyebrow="Baseline heat risk" title="Before any intervention" actions={<SourceChip source="assumed" />}>
       <div className="flex items-baseline gap-3">
         <span className="text-4xl font-semibold text-slate-900">
           <AnimatedNumber value={heatMetrics.baseScore} />
@@ -221,7 +222,8 @@ const BaselineRisk: React.FC = () => {
         <Stat label="Shade and canopy" value={`-${heatMetrics.shadeCooling.toFixed(1)}`} sub="points available" />
       </div>
       <p className="mt-4 text-xs text-slate-500">
-        Calibrated against satellite land surface temperature. Not an air temperature measurement.
+        A heuristic exposure index from the surface mix with assumed weights. It is not calibrated and not a temperature;
+        the site heat model on the Map page estimates surface temperature.
       </p>
     </Panel>
   );

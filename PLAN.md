@@ -162,3 +162,33 @@ Original question: dependencies (all would install on C:, inside the project): `
 grid) in the venv, and `leaflet` + `react-leaflet` (map with an OpenStreetMap basemap, which loads tiles from the
 internet) in the frontend. The no-dependency alternative is a text PDF with the existing `jspdf`, a CSV grid, and an
 SVG cell map without a basemap.
+
+## Outcome (2026-10-14)
+
+All phases implemented on `feat/heat-action-planner`, one commit per phase.
+
+- Tests: 111 at baseline, **153 passing** at the end (`backend/.venv`, `python -m pytest backend/tests`).
+- Site model (real run, `site_model_card.json`): spatial-CV R² 0.722, RMSE 1.514, MAE 1.165, within-block R² 0.707
+  with lat/lon (indices only: 0.707 / 1.556 / 1.194 / 0.701, so lat/lon was kept). Random KFold R² 0.748 (leakage
+  comparison only). Conformal intervals 80% ±1.84 °C (nested coverage 0.801), 90% ±2.45 °C (0.901).
+- Legacy model unchanged: R² 0.258, RMSE 2.475, MAE 1.872.
+- Demo mode: no `data/chennai_grid.parquet` yet, so hotspots run on the 3,117 sample points with spatial out-of-fold
+  predictions and a constant population (1,000 per point), labelled in the API and UI.
+
+Additional decisions taken during implementation:
+
+- Added `POST /api/v1/projects/{id}/replan` and `GET /api/v1/model-cards` (needed by the project and method pages).
+- Gating treats "no carriageway scale in the photo" as unknown (allowed with a survey condition) and "road measured,
+  no footpath found" as evidence (rejected).
+- Optimiser costs are rounded up to Rs 0.1 lakh units so the rupee budget is never exceeded; exclusivity groups are
+  street trees per zone, roof, and overhead shade per zone.
+- Verify: difference-in-differences needs at least 3 controls; the interval uses Student t with n-1 df on the spread
+  of control changes.
+- Frontend routing stays in the store, with URL hashes (#map, #project/<id>) and `?motion=off` for projectors.
+
+Known limitations:
+
+- The road-material detector sometimes flags ordinary asphalt as historic cobblestone, which rejects cool pavement
+  (pre-existing; seen on 3 of 5 samples).
+- The illustrative image depends on the free Hugging Face quota (about 5 GPU minutes per day per account).
+- The OSM basemap tiles were not confirmed in headless screenshots; the cell layer was.

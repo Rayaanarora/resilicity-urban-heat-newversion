@@ -93,7 +93,7 @@ const AcceptedRow: React.FC<{ item: AcceptedItem; index: number }> = ({ item, in
   );
 };
 
-/** Predicted (literature cooling band, shown as a negative change) vs observed difference-in-differences. */
+/** Expected (literature cooling band, shown as a negative change) vs observed difference-in-differences. */
 const ObservedVsPredicted: React.FC<{ m: Measurement }> = ({ m }) => {
   const r = m.result;
   const pred = r.predicted_cooling_c;
@@ -112,7 +112,7 @@ const ObservedVsPredicted: React.FC<{ m: Measurement }> = ({ m }) => {
           <span
             className="absolute top-3 h-4 bg-sky-100 border border-sky-700/50"
             style={{ left: x(-pred.high), width: `calc(${x(-pred.low)} - ${x(-pred.high)})` }}
-            title="Predicted cooling, literature band"
+            title="Expected cooling, literature band"
           />
         )}
         {pred && (
@@ -130,7 +130,7 @@ const ObservedVsPredicted: React.FC<{ m: Measurement }> = ({ m }) => {
       </div>
       <div className="flex flex-wrap gap-4 text-xs text-slate-600">
         <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 bg-sky-100 border border-sky-700/50" /> Predicted cooling (literature)
+          <span className="w-3 h-3 bg-sky-100 border border-sky-700/50" /> Expected cooling (literature)
         </span>
         <span className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 bg-slate-900" /> Observed vs controls, 95% interval (measured)
@@ -440,7 +440,7 @@ export const ProjectPage: React.FC = () => {
                   <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4">
                     <Figure label="Observed vs controls" value={ms.result.did_c} unit=" °C" band={ms.result.interval_95_c} source="measured" decimals={2} />
                     <Figure
-                      label="Predicted cooling"
+                      label="Expected cooling"
                       value={ms.result.predicted_cooling_c?.central ?? null}
                       unit=" °C"
                       band={ms.result.predicted_cooling_c ? [ms.result.predicted_cooling_c.low, ms.result.predicted_cooling_c.high] : null}

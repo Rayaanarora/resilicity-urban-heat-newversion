@@ -2,7 +2,8 @@ import React from 'react';
 import { useResiliCityStore } from '../store/useResiliCityStore';
 import { exposureLabel } from '../services/heatCalculator';
 import { AnimatedNumber } from './AnimatedNumber';
-import { Panel, SectionHeading, Stat, Tag } from './ui';
+import { SourceChip } from './Figure';
+import { Panel, SectionHeading, Stat } from './ui';
 import { sentenceCase } from './format';
 
 const ScoreScale: React.FC<{ base: number; projected: number }> = ({ base, projected }) => {
@@ -75,7 +76,7 @@ export const ImpactSection: React.FC = () => {
         description="Indicative local cooling with ranges. Treat these as planning estimates, not measured temperatures."
       />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <Panel eyebrow="Heat risk score" title="Baseline and proposed" actions={<Tag tone="amber">Estimate</Tag>}>
+        <Panel eyebrow="Heat risk index" title="Baseline and proposed" actions={<SourceChip source="assumed" />}>
           <div className="grid grid-cols-2 gap-2">
             <Stat
               label="Baseline"
@@ -117,13 +118,14 @@ export const ImpactSection: React.FC = () => {
               'Awaiting analysis'
             )
           }
-          actions={thermalImpact?.confidence ? <Tag>Confidence: {thermalImpact.confidence}</Tag> : undefined}
+          actions={<SourceChip source="literature" />}
         >
           <CoolingBreakdown />
           {thermalImpact?.mlModelDeltaRangeC && (
             <p className="mt-5 text-xs text-slate-500">
-              Satellite land-surface model change: {thermalImpact.mlModelDeltaC.toFixed(2)} °C (band {thermalImpact.mlModelDeltaRangeC[0].toFixed(1)} to{' '}
-              {thermalImpact.mlModelDeltaRangeC[1].toFixed(1)} °C).
+              Legacy land-cover model, shown for reference only (low confidence, not used for these cooling figures):{' '}
+              {thermalImpact.mlModelDeltaC.toFixed(2)} °C, band {thermalImpact.mlModelDeltaRangeC[0].toFixed(1)} to{' '}
+              {thermalImpact.mlModelDeltaRangeC[1].toFixed(1)} °C (±RMSE).
             </p>
           )}
           {thermalImpact?.confidenceNote && <p className="mt-2 text-xs text-slate-500">{thermalImpact.confidenceNote}</p>}
