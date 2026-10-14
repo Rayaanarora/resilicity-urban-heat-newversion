@@ -72,6 +72,7 @@ from analysis_service import run_site_analysis
 from hotspots import router as hotspots_router
 from projects import router as projects_router
 from optimizer import router as portfolio_router
+from exports import router as exports_router
 from scene_understanding import analyze_scene, render_heat_priority_colormap
 from segmentation import SegFormerEngine
 
@@ -135,6 +136,7 @@ app.include_router(planner_router)
 app.include_router(hotspots_router)
 app.include_router(projects_router)
 app.include_router(portfolio_router)
+app.include_router(exports_router)
 
 # ---------------------------------------------------------------------------
 # API Endpoints
