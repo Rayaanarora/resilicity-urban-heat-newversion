@@ -1,116 +1,85 @@
-# ResiliCity: Urban Heat Island AI Resilience Platform
+# ResiliCity
 
-[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![React 19](https://img.shields.io/badge/React_19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![TailwindCSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
+ResiliCity turns a street photo into a **buildable cooling plan**: it segments the street, measures it in metres,
+keeps only interventions that physically fit, and prices them per 100 m with permits and phasing. An AI image
+illustrates the top priorities; the specification is the deliverable.
 
-An AI-powered urban resilience platform that turns street-level imagery into an explainable, data-backed cooling plan with interactive before/after visual simulations.
+Work on the Heat Action Planner (city map, projects, budget optimiser, work orders, verification) is in progress on
+`feat/heat-action-planner`; see `PLAN.md`. This README describes what is in the code today.
 
----
-
-## Architecture Overview
+## How it works
 
 ```text
-Street-Level Photo
-        │
-        ▼
-STAGE 1 — Scene Understanding (LIVE)
-SegFormer Semantic Segmentation (nvidia/segformer-b0-finetuned-ade-512-512)
-        │
-        ├─────────────────────────────────────────┐
-        │                                         │
-        ▼                                         ▼
-Surface Mix Percentages                      Visual Context
-(Road, Pavement, Veg, Wall, Sky)                  │
-        │                                         │
-        ▼                                         ▼
-STAGE 2 — Heat Risk Regressor (LIVE)         STAGE 3 — VLM Planner (LIVE, needs ANTHROPIC_API_KEY)
-Landsat 8/9 LST + Sentinel-2 Gradient Boost       Structured JSON Interventions
-        │                                         │
-        │                                         ▼
-        │                                    STAGE 4 — SDXL + ControlNet (Future)
-        │                                    Depth-Bounded Street Inpainting
-        │                                         │
-        └───────────────────┬─────────────────────┘
-                            ▼
-                  ResiliCity Dashboard
-            Interactive Slider · SVG Overlays · PDF Report
+Street photo
+   │
+   ▼
+1. Segmentation        SegFormer-B0 (ADE20K) → road, footpath, walls, vegetation, sky, protected objects
+   │
+   ▼
+2. Measurement         footpath widths in metres, using the carriageway width as scale (±30% band)
+   │
+   ▼
+3. Buildable planning  rule-based planner (planner.py + buildable/): gating by clear walkway, junctions,
+   │                   obstacles, climate and heritage; ranking by utility or by cooling per lakh under a budget
+   │
+   ├──► Implementation plan: quantities per 100 m, indicative INR range, phase, permits, rejected items with reasons
+   │
+   └──► 4. Illustration  FLUX.1 Kontext edits the photo to show the top two intervention types (illustrative only)
 ```
 
----
+There is no LLM in the planning path. Planning is deterministic rules plus literature cooling ranges; every threshold,
+dimension and unit cost lives in `backend/buildable/config.py` and is labelled indicative.
 
-## Features
+## Heat numbers and what they mean
 
-- **Stage 1 (Live Scene Understanding):** Pretrained SegFormer Vision Transformer performs real-time pixel-level segmentation on uploaded street photos.
-- **ADE20K to ResiliCity Taxonomy:** 150 ADE20K classes deterministically mapped into 8 core resilience classes (`road`, `pavement`, `vegetation`, `wall`, `roof`, `water`, `sky`, `other`).
-- **Dynamic Mask Overlays:** OpenCV multi-region contour extraction rendered as crisp SVG overlays with per-class visibility toggles.
-- **Stage 3 (Live VLM Planner):** `POST /api/v1/plan` sends the photo and measured surface mix to a vision model, which picks interventions from a fixed catalog. Land-cover shifts and cooling estimates are computed server-side from the measured surfaces, not taken from model text. Without an API key the app falls back to rule-based interventions and says so in the UI.
-- **Stage 1 → Stage 2 Integration:** Segmented surface percentages automatically feed into the satellite heat regressor.
-- **Stage 2 (Live Empirical Heat Regressor):** Gradient Boosting model trained on 3,117 Google Earth Engine satellite points across Chennai/Chengalpattu with spatial cross-validation and monotonic physics constraints.
-- **Hybrid Temperature Calculations:** Combines satellite LST delta predictions (for land-cover shifts) with literature-calibrated cooling factors (for albedo treatments like cool roofs and cool pavements).
-- **Interactive Before/After Preview:** Drag-slider comparison with synchronized SVG mask clip paths.
-- **Automated Reporting:** Client-side JSON export and full PDF report generation.
+- **Cooling per intervention** comes from literature ranges in `buildable/config.py` (low / central / high). It is an
+  indicative localized estimate, summed without interaction effects.
+- **Land-surface regression** (`heat_model.joblib`): HistGradientBoosting on 7 WorldCover land-cover fractions,
+  trained on 3,117 Landsat points around Chennai/Chengalpattu. Spatial cross-validation (5 km blocks):
+  **R² 0.258, RMSE 2.475 °C, MAE 1.872 °C** (`model_card.json`). It explains about a quarter of the variation and
+  predicts small effects from land-cover changes, so it is shown as a low-confidence reference, not as the source of
+  intervention cooling.
+- `POST /api/v1/heat` returns the regression's before/after prediction. Its `reliable` flag is `false` only when the
+  change has the wrong sign or `|Δ| < 0.05 °C`; the RMSE is reported alongside as a band, it is not used as a gate.
+- Landsat LST is surface (skin) temperature, not air temperature, from March to May 2021–2025 medians.
 
----
+## API
 
-## Project Structure
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/health` | Status of segmentation, heat model, planner and image providers |
+| POST | `/api/v1/analyze-and-redesign` | Photo → segmentation, metrics, gated plan, implementation plan, thermal impact, illustrative image. Optional form fields: `design_profile`, `quality_tier`, `road_width_m`, `budget_lakh`, `climate_zone` |
+| POST | `/api/v1/refine-design` | Free-text edit of a generated image |
+| POST | `/api/v1/plan` | Planner only (legacy shape) |
+| POST | `/api/v1/heat` | Land-cover regression before/after (legacy, low confidence) |
+| POST | `/api/v1/segment` | Segmentation only |
+| POST | `/api/v1/inpaint` | **Deprecated** procedural inpainter, kept for old clients |
+
+Interactive docs: `http://localhost:8000/docs`.
+
+## Image generation
+
+FLUX.1 Kontext through providers tried in order (`IMAGE_PROVIDERS`, default `hf_space,fal`): the free Hugging Face
+Space (optional `HF_TOKEN` for more quota) and fal.ai (`FAL_KEY`, paid fallback). Results are cached on disk
+(`REDESIGN_CACHE_DIR`), and `REDESIGN_OFFLINE=1` serves cached results only. See `backend/.env.example`.
+
+## Project structure
 
 ```text
-gen-ai_project_fixed/
-├── backend/                        # FastAPI Python ML backend
-│   ├── segmentation/               # SegFormer engine, taxonomy mapper, contour extractor
-│   │   ├── __init__.py
-│   │   ├── model.py                # Singleton SegFormer inference engine
-│   │   ├── mapper.py               # ADE20K -> ResiliCity label mapping
-│   │   └── contours.py             # OpenCV polygon extraction
-│   ├── heat_model.joblib           # Trained satellite LST regression model
-│   ├── model_card.json             # Spatial CV metrics (R²=0.27, RMSE=2.46°C)
-│   ├── planner.py                  # Stage 3 VLM planner (/plan) + output validation
-│   ├── tests/                      # pytest (run: python -m pytest backend/tests)
-│   ├── main.py                     # FastAPI routes (/health, /segment, /heat)
-│   └── requirements.txt            # Python dependencies
-├── gen-ai/                         # React 19 + TypeScript + Vite frontend
-│   ├── src/
-│   │   ├── components/             # BeforeAfterPreview, SurfaceMasksCard, HeatRiskScoreCard, etc.
-│   │   ├── services/               # API clients and heat calculation algorithms
-│   │   ├── store/                  # Zustand global application state
-│   │   └── types/                  # TypeScript interfaces
-│   └── package.json
-├── ResiliCity_ML.ipynb             # Google Earth Engine data extraction & model training notebook
-└── setup.md                        # Quickstart instructions
+backend/
+  main.py                 FastAPI app and routes
+  planner.py              rule-based spatial planner (candidates, interactions, ranking)
+  buildable/              config (all numbers), catalog, metrics, observations, gating, implementation, thermal
+  scene_understanding/    street geometry, solar/shade proxies, heat priority map
+  segmentation/           SegFormer engine and ADE20K → ResiliCity mapping
+  image_generation/       FLUX.1 Kontext providers, prompts, redesign engine with disk cache, validation
+  inpainting/             deprecated procedural inpainter behind /api/v1/inpaint
+  heat_model.joblib, model_card.json, retrain.py, resilicity_samples.csv
+  tests/                  pytest suite
+gen-ai/                   React 19 + TypeScript + Vite + Zustand + Tailwind frontend
+ResiliCity_ML.ipynb       Earth Engine extraction and model training notebook
 ```
-
----
 
 ## Quickstart
 
-### Prerequisites
-- Python 3.10+
-- Node.js 20+
-
-### 1. Backend Setup (Terminal 1)
-```bash
-cd backend
-python -m pip install -r requirements.txt
-export ANTHROPIC_API_KEY=...   # optional: enables the Stage 3 planner (PLANNER_MODEL overrides the model)
-python -m uvicorn main:app --reload --port 8000
-```
-- API Health Check: `http://localhost:8000/api/v1/health`
-- Interactive OpenAPI Docs: `http://localhost:8000/docs`
-
-### 2. Frontend Setup (Terminal 2)
-```bash
-cd gen-ai
-npm install
-npm run dev
-```
-Open `http://localhost:5173` in your browser.
-
----
-
-## Implemented ML & Inpainting Modules
-
-1. **Part B Local SegFormer Fine-Tuning (`fine_tune_segformer.py`):** Fully implemented pipeline fine-tuning `nvidia/mit-b0` to the native 8-class ResiliCity taxonomy (`road`, `pavement`, `vegetation`, `wall`, `roof`, `water`, `sky`, `other`). Weights and processor are saved at `backend/segformer-local-final`, which the inference engine automatically detects and loads as `local_fine_tuned`.
-2. **Stage 4 Resilient Inpainting Engine (`backend/inpainting/`):** Mask-bounded procedural inpainter applying photo-realistic cooling transformations (high-albedo reflective cool roofs, extensive green roofs, reflective cool pavement, permeable interlocking pavers, lush street tree canopies with ground shadows, and tensile fabric shade structures) directly through `POST /api/v1/inpaint`.
+See `setup.md`. Tests: `python -m pytest backend/tests`.
