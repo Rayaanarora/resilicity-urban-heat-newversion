@@ -50,7 +50,10 @@ yarn-error.log*
 # Large model checkpoints / dataset folders
 segformer-local-final/
 segformer-checkpoints/
-/data/
+# Root data/: exported grids stay local; scripts and docs are tracked
+/data/*
+!/data/*.py
+!/data/README.md
 
 # OS and Editors
 .DS_Store
@@ -73,3 +76,6 @@ debug_*.png
 *.env.*
 !.env.example
 
+# Project workspace database and uploads
+backend/data/projects/
+backend/data/*.sqlite3

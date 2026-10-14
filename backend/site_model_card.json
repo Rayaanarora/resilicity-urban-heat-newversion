@@ -1,0 +1,131 @@
+{
+  "name": "ResiliCity site heat model v2",
+  "purpose": "Where is it hot: predicts pre-monsoon Landsat land surface temperature for a site. Not an intervention what-if model; it must not be used to predict the cooling of a redesign.",
+  "target": "Landsat 8/9 LST, Mar-May 2021-2025 median, deg C (surface temperature, not air temperature)",
+  "data_source": "resilicity_samples.csv",
+  "n_samples": 3117,
+  "n_blocks": 94,
+  "features": [
+    "f_tree",
+    "f_shrub",
+    "f_grass",
+    "f_crop",
+    "f_built",
+    "f_bare",
+    "f_water",
+    "NDVI",
+    "NDBI",
+    "MNDWI",
+    "lat",
+    "lon"
+  ],
+  "monotonic_constraints": {
+    "f_tree": -1,
+    "f_shrub": -1,
+    "f_grass": -1,
+    "f_built": 1,
+    "f_water": -1,
+    "NDVI": -1,
+    "NDBI": 1,
+    "MNDWI": -1
+  },
+  "model": "HistGradientBoostingRegressor(max_depth=4, learning_rate=0.05, max_iter=300, min_samples_leaf=30)",
+  "cv": {
+    "scheme": "GroupKFold(5) on 0.05 deg blocks",
+    "spatial": {
+      "R2": 0.7221946371330442,
+      "RMSE": 1.5144386732882522,
+      "MAE": 1.1652911539956972,
+      "within_block_R2": 0.7067876957796764
+    }
+  },
+  "feature_set_comparison": {
+    "land_cover+indices": {
+      "R2": 0.7066298764117067,
+      "RMSE": 1.556285677547585,
+      "MAE": 1.1937079279288014,
+      "within_block_R2": 0.7007307080336436
+    },
+    "land_cover+indices+latlon": {
+      "R2": 0.7221946371330442,
+      "RMSE": 1.5144386732882522,
+      "MAE": 1.1652911539956972,
+      "within_block_R2": 0.7067876957796764
+    }
+  },
+  "leakage_comparison_random_kfold": {
+    "R2": 0.7477892701699169,
+    "RMSE": 1.4429894576997189,
+    "MAE": 1.1073396039998842,
+    "within_block_R2": 0.7130748679393344
+  },
+  "intervals": {
+    "method": "split-conformal on spatial out-of-fold absolute residuals",
+    "80": {
+      "half_width_c": 1.8421727426411607,
+      "nominal": 0.8,
+      "empirical_coverage_nested_spatial": 0.8014116137311518
+    },
+    "90": {
+      "half_width_c": 2.450935564866896,
+      "nominal": 0.9,
+      "empirical_coverage_nested_spatial": 0.9008662175168431
+    }
+  },
+  "training_ranges": {
+    "f_tree": [
+      0.0,
+      1.0
+    ],
+    "f_shrub": [
+      0.0,
+      1.0
+    ],
+    "f_grass": [
+      0.0,
+      1.0
+    ],
+    "f_crop": [
+      0.0,
+      1.0
+    ],
+    "f_built": [
+      0.0,
+      1.0
+    ],
+    "f_bare": [
+      0.0,
+      1.0
+    ],
+    "f_water": [
+      0.0,
+      0.4889187374076562
+    ],
+    "NDVI": [
+      -0.416823062144208,
+      0.8071644315748451
+    ],
+    "NDBI": [
+      -0.517019936224987,
+      0.3060423134248934
+    ],
+    "MNDWI": [
+      -0.6405793074122385,
+      0.5832796433196145
+    ],
+    "lat": [
+      12.600156317780373,
+      13.199906321538483
+    ],
+    "lon": [
+      79.90011009489916,
+      80.31490036247703
+    ]
+  },
+  "lst_range_c": [
+    31.447554914474225,
+    52.538022647508384
+  ],
+  "sklearn_version": "1.9.1",
+  "trained_on": "2026-10-14"
+}

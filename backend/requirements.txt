@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-scikit-learn>=1.8.0
+scikit-learn==1.9.1
 joblib
 pandas
 numpy
@@ -13,3 +13,4 @@ safetensors
 huggingface_hub
 pillow
 opencv-python-headless
+pyarrow>=20
