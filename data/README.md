@@ -44,4 +44,19 @@ python -m site_model.train --csv ../data/chennai_grid.csv
 
 ## 2. Post-construction monitoring (verify loop)
 
-See `export_monitor.py` (added with the verify phase).
+After an intervention is built, compare the project cell with untreated control cells:
+
+```powershell
+python data/export_monitor.py --project YOUR_GCP_PROJECT --lat 13.0500 --lon 80.2200 --pre 2023 --post 2027 --out data/monitor_myproject.json
+```
+
+Each period is March to May of that year. Controls are 250 m cells 0.75 to 3 km away with a pre-period LST within
+1 °C and a built-up fraction within 0.15 of the project cell (all adjustable). Upload the JSON in the project's
+Monitor tab, or:
+
+```powershell
+curl -X POST -H "Content-Type: application/json" --data-binary @data/monitor_myproject.json http://localhost:8000/api/v1/projects/<id>/measurements
+```
+
+The API reports a difference-in-differences estimate with a 95% interval and states plainly when the data cannot
+support a claim (fewer than 3 controls, or an interval that includes zero).

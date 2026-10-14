@@ -4,11 +4,12 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
 from . import db
+from .monitor import difference_in_differences, parse_rows
 from .service import ProjectError, create_project, generate_redesign, project_view
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
@@ -94,3 +95,34 @@ def delete(project_id: str):
     db.delete_project(project_id)
     shutil.rmtree(Path(p["photo_path"]).parent, ignore_errors=True)
     return {"deleted": project_id}
+
+
+@router.post("/{project_id}/measurements", status_code=201)
+async def add_measurement(project_id: str, request: Request):
+    """Upload post-construction LST for the project cell and control cells (JSON body, or a CSV/JSON file)."""
+    p = _get_or_404(project_id)
+    ctype = request.headers.get("content-type", "")
+    if ctype.startswith("multipart/form-data"):
+        form = await request.form()
+        upload = form.get("file")
+        if upload is None or not hasattr(upload, "read"):
+            raise HTTPException(422, "multipart upload needs a 'file' field")
+        raw, ctype = await upload.read(), (upload.content_type or "") + " " + (upload.filename or "")
+    else:
+        raw = await request.body()
+    try:
+        payload = parse_rows(raw, ctype)
+        accepted = project_view(p)["accepted"]
+        predicted = {k: round(sum((a["cooling_c"] or {}).get(k, 0.0) for a in accepted), 3) for k in ("low", "central", "high")}
+        result = difference_in_differences(payload["rows"], {**predicted, "source": "literature"})
+    except (ValueError, UnicodeDecodeError) as e:
+        raise HTTPException(422, str(e))
+    result.update(pre_period=payload.get("pre_period"), post_period=payload.get("post_period"))
+    mid = db.add_measurement(project_id, payload, result)
+    return {"id": mid, **result}
+
+
+@router.get("/{project_id}/measurements")
+def list_measurements(project_id: str):
+    _get_or_404(project_id)
+    return {"measurements": db.list_measurements(project_id)}
