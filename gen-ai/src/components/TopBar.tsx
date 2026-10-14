@@ -2,13 +2,17 @@ import React, { useLayoutEffect, useRef, useState } from 'react';
 import { useResiliCityStore, type NavTab } from '../store/useResiliCityStore';
 
 const TABS: { id: NavTab; label: string }[] = [
-  { id: 'analysis', label: 'Analysis' },
-  { id: 'saved_runs', label: 'Saved runs' },
+  { id: 'map', label: 'Map' },
+  { id: 'projects', label: 'Projects' },
+  { id: 'portfolio', label: 'Portfolio' },
+  { id: 'analysis', label: 'Single photo' },
   { id: 'method_note', label: 'Method' },
 ];
 
 export const TopBar: React.FC = () => {
-  const { activeTab, setActiveTab, backendStatus } = useResiliCityStore();
+  const { activeTab: rawTab, setActiveTab, backendStatus } = useResiliCityStore();
+  // A project page belongs under the Projects tab.
+  const activeTab: NavTab = rawTab === 'project' ? 'projects' : rawTab;
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [indicator, setIndicator] = useState({ left: 0, width: 0 });
 
@@ -21,7 +25,7 @@ export const TopBar: React.FC = () => {
   return (
     <header className="sticky top-0 z-50 bg-white/95 backdrop-blur border-b border-slate-200">
       <div className="max-w-[1280px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-6">
-        <button type="button" onClick={() => setActiveTab('analysis')} className="flex items-center gap-3 cursor-pointer">
+        <button type="button" onClick={() => setActiveTab('map')} className="flex items-center gap-3 cursor-pointer">
           <span className="w-7 h-7 bg-[#0d7a5f] flex items-center justify-center text-white text-sm font-semibold">R</span>
           <span className="flex flex-col items-start leading-tight">
             <span className="text-[15px] font-semibold text-slate-900">ResiliCity</span>
@@ -29,7 +33,7 @@ export const TopBar: React.FC = () => {
           </span>
         </button>
 
-        <nav className="relative hidden sm:flex items-center gap-8 h-14">
+        <nav className="relative hidden md:flex items-center gap-7 h-14">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -61,13 +65,13 @@ export const TopBar: React.FC = () => {
       </div>
 
       {/* Mobile tabs */}
-      <nav className="sm:hidden flex border-t border-slate-200">
+      <nav className="md:hidden flex border-t border-slate-200 overflow-x-auto">
         {TABS.map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => setActiveTab(t.id)}
-            className={`flex-1 py-2.5 text-sm border-b-2 ${activeTab === t.id ? 'border-[#0d7a5f] text-slate-900' : 'border-transparent text-slate-500'}`}
+            className={`flex-1 whitespace-nowrap px-3 py-2.5 text-sm border-b-2 ${activeTab === t.id ? 'border-[#0d7a5f] text-slate-900' : 'border-transparent text-slate-500'}`}
           >
             {t.label}
           </button>

@@ -109,6 +109,32 @@ def create_project(
     return project_view(db.get_project(project_id))
 
 
+def replan_project(
+    project_id: str,
+    road_width_m: Optional[float] = None,
+    climate_zone: Optional[str] = None,
+    budget_lakh: Optional[float] = None,
+) -> Optional[Dict[str, Any]]:
+    """Re-run the gated plan on the stored photo with new inputs. The illustrative image becomes stale."""
+    p = db.get_project(project_id)
+    if p is None:
+        return None
+    started = time.time()
+    image = Image.open(p["photo_path"]).convert("RGB")
+    site = run_site_analysis(image, road_width_m=road_width_m, climate_zone=climate_zone, budget_lakh=budget_lakh)
+    plan = site.plan.dict()
+    db.update_project(
+        project_id,
+        road_width_m=road_width_m, climate_zone=climate_zone, budget_lakh=budget_lakh,
+        plan=plan, thermal=site.thermal,
+        analysis={**(p.get("analysis") or {}), "surfaces": site.surfaces, "segmentation_ok": site.segmentation_ok},
+        redesign_status="none", redesign_error=None, redesign_path=None, redesign_meta=None,
+    )
+    db.log_run(project_id, "replan", "ok", {"road_width_m": road_width_m, "climate_zone": climate_zone,
+                                            "budget_lakh": budget_lakh, "n_interventions": len(plan["interventions"])}, started)
+    return project_view(db.get_project(project_id), include_runs=True)
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Serialisation with source tags and bands
 # ---------------------------------------------------------------------------------------------------------------

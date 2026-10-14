@@ -70,7 +70,7 @@ const RunControls: React.FC = () => {
   );
 };
 
-const ComparisonViewer: React.FC = () => {
+export const ComparisonViewer: React.FC = () => {
   const { rawImageUrl, generatedImageUrl, sliderPosition, setSliderPosition, viewMode, setViewMode, isGenerating, generationStage, visualizationOutput } =
     useResiliCityStore();
   const frameRef = useRef<HTMLDivElement>(null);
@@ -165,7 +165,18 @@ const ComparisonViewer: React.FC = () => {
       bodyClassName="p-0"
     >
       <div ref={shellRef} className="bg-slate-50 flex flex-col justify-center">
-        {viewMode === 'side-by-side' ? (
+        {!hasResult && !isGenerating ? (
+          /* Nothing to compare yet: show the existing street and say so plainly. */
+          <div className="relative bg-slate-100 overflow-hidden" style={framedAspect(aspect, 560)}>
+            {rawImageUrl && <img src={rawImageUrl} alt="Existing street" className="absolute inset-0 w-full h-full object-cover" />}
+            <span className="absolute top-3 left-3 bg-white/95 px-2 py-1 text-[11px] text-slate-700 border border-slate-200">Existing</span>
+            <span className="absolute inset-x-0 bottom-0 bg-white/95 border-t border-slate-200 px-4 py-2.5 text-xs text-slate-600">
+              {unavailable
+                ? 'No illustrative image: generation did not complete. The plan and specification are unaffected.'
+                : 'No illustrative image yet. Generate one to compare; the plan and specification do not depend on it.'}
+            </span>
+          </div>
+        ) : viewMode === 'side-by-side' ? (
           <div className="grid grid-cols-2 gap-px bg-slate-200">
             {[false, true].map((isProposal) => (
               <div key={String(isProposal)} className="relative bg-slate-100 overflow-hidden" style={framedAspect(aspect, 440)}>

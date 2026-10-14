@@ -91,3 +91,20 @@ def test_delete_project_removes_row_and_files(client):
     assert client.delete(f"/api/v1/projects/{p['id']}").status_code == 200
     assert db.get_project(p["id"]) is None and not folder.exists()
     assert client.get(f"/api/v1/projects/{p['id']}").status_code == 404
+
+
+def test_replan_updates_plan_and_marks_image_stale(client):
+    pid = _create(client).json()["id"]
+    res = client.post(f"/api/v1/projects/{pid}/replan", data={"road_width_m": "14", "budget_lakh": "3"})
+    assert res.status_code == 200, res.text
+    p = res.json()
+    assert p["inputs"]["road_width_m"] == 14.0 and p["street_metrics"]["road_width_m"] == 14.0
+    assert p["implementation_plan"]["budget_lakh"] == 3.0
+    assert p["redesign"]["status"] == "none"
+    assert [r["kind"] for r in p["runs"]] == ["analysis", "replan"]
+
+
+def test_model_cards_endpoint(client):
+    cards = client.get("/api/v1/model-cards").json()
+    assert cards["site_model"]["spatial_cv"]["R2"] > cards["legacy_land_cover_model"]["spatial_cv"]["R2"]
+    assert "intervals" in cards["site_model"]["card"]

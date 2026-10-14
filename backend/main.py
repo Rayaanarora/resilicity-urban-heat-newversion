@@ -141,6 +141,20 @@ app.include_router(exports_router)
 # ---------------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------------
+@app.get("/api/v1/model-cards")
+def model_cards_endpoint():
+    """Both heat models with their real metrics (site model for hotspots; legacy model for /heat only)."""
+    from exports.content import model_cards
+    from site_model import load_site_model
+
+    site = load_site_model()
+    cards = model_cards()
+    if site is not None:
+        cards["site_model"]["card"] = site.card
+    cards["legacy_land_cover_model"]["card"] = card
+    return cards
+
+
 @app.get("/api/v1/health")
 def health():
     seg_info = seg_engine.get_status()

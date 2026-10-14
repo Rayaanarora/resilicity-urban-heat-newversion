@@ -293,6 +293,17 @@ button:not(:disabled):active {
   animation-delay: 0.3s;
 }
 
+/* ?motion=off (projector / screenshot mode): no animation at all, final states only */
+.rc-no-motion *, .rc-no-motion *::before, .rc-no-motion *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* The draw-in effect hides strokes until animated; show them fully when motion is off. */
+.rc-no-motion .rc-draw {
+  stroke-dashoffset: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

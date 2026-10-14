@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 
 from . import db
 from .monitor import difference_in_differences, parse_rows
-from .service import ProjectError, create_project, generate_redesign, project_view
+from .service import ProjectError, create_project, generate_redesign, project_view, replan_project
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
@@ -64,6 +64,17 @@ def list_all():
 @router.get("/{project_id}")
 def detail(project_id: str):
     return project_view(_get_or_404(project_id), include_runs=True)
+
+
+@router.post("/{project_id}/replan")
+async def replan(
+    project_id: str,
+    road_width_m: Optional[float] = Form(None),
+    climate_zone: Optional[str] = Form(None),
+    budget_lakh: Optional[float] = Form(None),
+):
+    _get_or_404(project_id)
+    return await run_in_threadpool(replan_project, project_id, road_width_m, climate_zone, budget_lakh)
 
 
 @router.get("/{project_id}/photo")

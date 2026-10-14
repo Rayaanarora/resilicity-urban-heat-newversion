@@ -20,12 +20,14 @@ import type {
   VisualizationOutput,
 } from '../types/resilicity';
 
-export type NavTab = 'analysis' | 'saved_runs' | 'method_note';
+export type NavTab = 'map' | 'projects' | 'project' | 'portfolio' | 'analysis' | 'method_note';
 
 interface ResiliCityStoreState {
   // Navigation
   activeTab: NavTab;
   setActiveTab: (tab: NavTab) => void;
+  activeProjectId: string | null;
+  openProject: (id: string) => void;
 
   // Scene & Images
   currentSceneId: string;
@@ -94,6 +96,14 @@ interface ResiliCityStoreState {
 }
 
 let estimateRequestId = 0;
+
+/** Initial page from the URL hash (#map, #projects, #project/<id>, ...), read once at start-up. */
+function initialRoute(): { tab: NavTab; projectId: string | null } {
+  const valid: NavTab[] = ['map', 'projects', 'portfolio', 'analysis', 'method_note'];
+  const [tab, id] = (typeof window !== 'undefined' ? window.location.hash : '').replace(/^#/, '').split('/');
+  if (tab === 'project' && id) return { tab: 'project', projectId: id };
+  return { tab: valid.includes(tab as NavTab) ? (tab as NavTab) : 'map', projectId: null };
+}
 const round1 = (n: number) => Number(n.toFixed(1));
 
 export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
@@ -109,8 +119,10 @@ export const useResiliCityStore = create<ResiliCityStoreState>((set, get) => {
   );
 
   return {
-    activeTab: 'analysis',
+    activeTab: initialRoute().tab,
     setActiveTab: (tab: NavTab) => set({ activeTab: tab }),
+    activeProjectId: initialRoute().projectId,
+    openProject: (id: string) => set({ activeProjectId: id, activeTab: 'project' }),
 
     currentSceneId: initialScene.id,
     currentFile: null,

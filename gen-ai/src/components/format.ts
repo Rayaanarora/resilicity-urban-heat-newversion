@@ -12,3 +12,5 @@ export const framedAspect = (aspect: number, maxHeight: number): React.CSSProper
   width: `min(100%, ${Math.round(maxHeight * aspect)}px)`,
   marginInline: 'auto',
 });
+
+export const inrLakh = (n: number) => (n >= 100_000 ? `₹${(n / 100_000).toFixed(1)} L` : `₹${Math.round(n).toLocaleString('en-IN')}`);
